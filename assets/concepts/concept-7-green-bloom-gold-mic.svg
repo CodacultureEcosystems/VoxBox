@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="pN" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0A2E18"/><stop offset="70%" stop-color="#39FF6E"/><stop offset="100%" stop-color="#8CFFB4"/>
+    </linearGradient>
+    <linearGradient id="pE" x1="1" y1="0" x2="0" y2="0">
+      <stop offset="0%" stop-color="#0A2E18"/><stop offset="70%" stop-color="#39FF6E"/><stop offset="100%" stop-color="#8CFFB4"/>
+    </linearGradient>
+    <linearGradient id="pS" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0%" stop-color="#0A2E18"/><stop offset="70%" stop-color="#39FF6E"/><stop offset="100%" stop-color="#8CFFB4"/>
+    </linearGradient>
+    <linearGradient id="pW" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#0A2E18"/><stop offset="70%" stop-color="#39FF6E"/><stop offset="100%" stop-color="#8CFFB4"/>
+    </linearGradient>
+    <linearGradient id="tri" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#39FF6E" stop-opacity="0.85"/><stop offset="100%" stop-color="#0A2E18" stop-opacity="0.9"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#F5DE9C"/><stop offset="50%" stop-color="#D4AF37"/><stop offset="100%" stop-color="#8C6D1F"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="512" height="512" rx="72" fill="#020503"/>
+
+  <!-- corner deltas: reaching to the edges, pointing inward -->
+  <g fill="url(#tri)">
+    <polygon points="30,30 150,30 30,150"/>
+    <polygon points="482,30 482,150 362,30"/>
+    <polygon points="482,482 362,482 482,362"/>
+    <polygon points="30,482 30,362 150,482"/>
+  </g>
+
+  <!-- four swirl petals: curling clockwise from outer tip toward the center gap -->
+  <!-- north petal -->
+  <path d="M256 56 C 340 108 344 196 286 236 C 280 240 272 238 270 230 C 262 196 212 108 232 68 C 240 52 248 52 256 56 Z" fill="url(#pN)"/>
+  <!-- rotated copies -->
+  <path d="M256 56 C 340 108 344 196 286 236 C 280 240 272 238 270 230 C 262 196 212 108 232 68 C 240 52 248 52 256 56 Z" fill="url(#pE)" transform="rotate(90 256 256)"/>
+  <path d="M256 56 C 340 108 344 196 286 236 C 280 240 272 238 270 230 C 262 196 212 108 232 68 C 240 52 248 52 256 56 Z" fill="url(#pS)" transform="rotate(180 256 256)"/>
+  <path d="M256 56 C 340 108 344 196 286 236 C 280 240 272 238 270 230 C 262 196 212 108 232 68 C 240 52 248 52 256 56 Z" fill="url(#pW)" transform="rotate(270 256 256)"/>
+
+  <!-- golden vintage microphone overlay: the heart of the bloom -->
+  <g>
+    <rect x="230" y="182" width="52" height="92" rx="26" fill="url(#gold)"/>
+    <g stroke="#5C4712" stroke-width="3.2" opacity="0.7">
+      <line x1="234" y1="206" x2="278" y2="206"/>
+      <line x1="233" y1="224" x2="279" y2="224"/>
+      <line x1="233" y1="242" x2="279" y2="242"/>
+      <line x1="234" y1="260" x2="278" y2="260"/>
+    </g>
+    <path d="M202 234 a54 54 0 0 0 108 0" fill="none" stroke="url(#gold)" stroke-width="7.5" stroke-linecap="round"/>
+    <line x1="256" y1="300" x2="256" y2="314" stroke="url(#gold)" stroke-width="6.5" stroke-linecap="round"/>
+    <path d="M248 312 L264 312 L259 352 L253 352 Z" fill="url(#gold)"/>
+    <rect x="243" y="356" width="26" height="9" rx="4" fill="url(#gold)"/>
+  </g>
+</svg>
