@@ -269,7 +269,7 @@ pub fn run(config: Config, _no_tts: bool) -> Result<()> {
         };
 
         let injector = Injector::from_config(&injector_hint, &text);
-        match injector.inject(&text) {
+        match injector.inject_with_fallback(&text) {
             Ok(()) => {
                 println!("  ▶ typed: {text}");
                 let _ = tracer.emit_ok(crate::trace::Verb::Yield, cell_id);

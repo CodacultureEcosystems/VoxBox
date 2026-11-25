@@ -155,12 +155,22 @@ command -v gtk-update-icon-cache >/dev/null 2>&1 && \
     gtk-update-icon-cache -f -t "$HOME/.local/share/icons/hicolor" || true
 
 # ── 8. permissions needed for global hotkey + text injection ──────────────
-say "Permission setup"
-echo "  VoxBox needs two group memberships to run system-wide:"
-echo "    sudo usermod -aG input  \$USER   # read /dev/input (global hotkey)"
-echo "    sudo usermod -aG uinput \$USER   # create /dev/uinput virtual keyboard"
+say "Permission setup (uinput rule + group memberships)"
+if command -v sudo >/dev/null 2>&1; then
+    SUDO=sudo
+else
+    SUDO=
+fi
+$SUDO groupadd -f uinput 2>/dev/null || true
+printf 'KERNEL=="uinput", GROUP="uinput", MODE="0660"\n' \
+    | $SUDO tee /etc/udev/rules.d/60-voxbox-uinput.rules >/dev/null || true
+$SUDO udevadm control --reload 2>/dev/null || true
+$SUDO udevadm trigger /dev/uinput 2>/dev/null || true
+echo "  Add your user to both groups (activation needs a fresh login):"
+echo "    sudo usermod -aG input,uinput \$USER"
 echo "  Log out and back in afterwards."
-echo "  Or paste the udev rule from the README for uinput uaccess."
+echo "  (The udev rule above already grants uinput to the uinput group,"
+echo "   which the groupadd created if it was missing on your distro.)"
 
 CONFIGURED_KEY="$(sed -n 's/^key *= *"\(.*\)"$/\1/p' "$CONFIG_DIR/config.toml" 2>/dev/null | head -1)"
 

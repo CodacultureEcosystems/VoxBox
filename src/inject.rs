@@ -72,6 +72,34 @@ impl Injector {
         }
     }
 
+    /// Backends worth trying after the primary one fails.
+    fn fallbacks(self, text: &str) -> Vec<Injector> {
+        fallback_order(
+            self,
+            text,
+            which("wtype"),
+            which("xdotool"),
+            which("ydotool"),
+            uinput_available(),
+        )
+    }
+
+    /// Type the text, retrying with the other available backends if the
+    /// primary fails (e.g. /dev/uinput opens but UI_DEV_CREATE is denied).
+    pub fn inject_with_fallback(self, text: &str) -> Result<()> {
+        match self.inject(text) {
+            Ok(()) => Ok(()),
+            Err(first) => {
+                for alt in self.fallbacks(text) {
+                    if alt.inject(text).is_ok() {
+                        return Ok(());
+                    }
+                }
+                Err(first)
+            }
+        }
+    }
+
     pub fn inject(self, text: &str) -> Result<()> {
         if text.is_empty() {
             return Ok(());
@@ -90,6 +118,33 @@ impl Injector {
             )),
         }
     }
+}
+
+/// Deterministic alternate ordering: CLI injectors first (wtype, xdotool,
+/// ydotool), uinput last, so a denied uinput device still gets a second
+/// chance via the others.
+fn fallback_order(
+    primary: Injector,
+    text: &str,
+    has_wtype: bool,
+    has_xdotool: bool,
+    has_ydotool: bool,
+    uinput_ok: bool,
+) -> Vec<Injector> {
+    let mut alts = Vec::new();
+    if has_wtype && primary != Injector::WType {
+        alts.push(Injector::WType);
+    }
+    if has_xdotool && primary != Injector::XDoTool {
+        alts.push(Injector::XDoTool);
+    }
+    if has_ydotool && primary != Injector::YDoTool {
+        alts.push(Injector::YDoTool);
+    }
+    if uinput_ok && ascii_typeable(text) && primary != Injector::Uinput {
+        alts.push(Injector::Uinput);
+    }
+    alts
 }
 
 fn run_injector(program: &str, args: Vec<String>) -> Result<()> {
@@ -321,6 +376,33 @@ mod tests {
             };
             assert_eq!(inj.as_str(), *name);
         }
+    }
+
+    #[test]
+    fn fallback_order_prefers_cli_over_uinput() {
+        let alts = fallback_order(
+            Injector::Uinput,
+            "hello",
+            true,
+            false,
+            false,
+            false,
+        );
+        assert_eq!(alts, vec![Injector::WType]);
+
+        let alts = fallback_order(
+            Injector::XDoTool,
+            "unicode: & ü",
+            true,
+            true,
+            true,
+            true,
+        );
+        assert_eq!(
+            alts,
+            vec![Injector::WType, Injector::YDoTool],
+            "uinput skipped for non-ascii text; no self-retry"
+        );
     }
 
     #[test]
