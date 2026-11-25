@@ -1,0 +1,45 @@
+# voxbox configuration
+# Copy to ~/.config/voxbox/config.toml and edit.
+
+[stt]
+# tiny | tiny.en | base | small | medium | large-v3 (auto-downloaded from HuggingFace)
+model = "base"
+language = "en"        # "en", or "" for auto-detect
+
+[audio]
+sample_rate = 16000
+silence_ms = 900       # trailing silence that ends an utterance
+max_seconds = 20       # hard cap on a single recording
+threshold = 0.004      # energy VAD threshold (0.002 = more sensitive)
+
+[tts]
+# auto | piper | spd-say | espeak | none
+engine = "auto"
+voice = ""             # piper voice path or espeak voice name, empty = default
+enabled = true
+
+[brain]
+# Optional LLM for full speech-to-speech dialogue.
+# Any OpenAI-compatible endpoint works: ollama, llama.cpp server, LM Studio, OpenAI, ...
+# Leave empty to use the built-in rule-based intent parser only.
+api_base = ""          # e.g. http://127.0.0.1:11434/v1 (ollama)
+model = ""             # e.g. llama3.2, mistral-small, gpt-4o-mini
+# The key is read from the VOXBOX_API_KEY environment variable.
+
+[executor]
+timeout_secs = 20
+# Commands to always refuse.
+blocklist = [
+    "mkfs", "dd if=", ":(){", "wget -O- | sh", "curl -L | sh",
+    "chmod -R 777 /", ">/dev/sda", "history -c",
+]
+# Everything matching these asks for confirmation before running.
+confirm_patterns = [
+    "rm ", "shutdown", "reboot", "poweroff", "systemctl stop",
+    "systemctl disable", "kill ", "pkill", "killall", "apt remove",
+    "dnf remove", "pacman -R", "mv ", "cp -r", "sudo", "chown", "git push",
+]
+
+[ui]
+# Speak back every command result ("full"), errors only ("errors"), never ("none")
+feedback = "full"
