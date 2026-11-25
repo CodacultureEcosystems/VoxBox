@@ -146,16 +146,18 @@ pub fn run(config: Config, _no_tts: bool) -> Result<()> {
     let mut transcriber: Option<Transcriber> = None;
 
     let (tx, rx) = mpsc::channel::<()>();
-    let started = spawn_monitors(code, tx.clone())?;
-    if started == 0 {
-        return Err(anyhow!(
-            "no readable input devices under /dev/input; add your user to the input group: \
-             sudo usermod -aG input $USER (log out and back in)"
-        ));
-    }
-
     let quit = Arc::new(AtomicBool::new(false));
-    let tray = crate::tray::spawn(&key_name, tx, Arc::clone(&quit));
+    let tray = crate::tray::spawn(&key_name, tx.clone(), Arc::clone(&quit));
+
+    let started = spawn_monitors(code, tx.clone())?;
+    let mut monitors_active = started > 0;
+    if !monitors_active {
+        println!(
+            "  [input] no /dev/input devices readable yet — waiting (5 s retries). \
+             Fix with: sudo usermod -aG input,uinput $USER, then LOG OUT and back in, \
+             and restart vbd"
+        );
+    }
 
     let injector_hint = config.dictation.injector.clone();
     let cell_id = (std::process::id() as u64) << 16 | (code as u64);
@@ -173,13 +175,21 @@ pub fn run(config: Config, _no_tts: bool) -> Result<()> {
     );
 
     loop {
-        match rx.recv_timeout(Duration::from_millis(300)) {
+        match rx.recv_timeout(Duration::from_secs(5)) {
             Ok(()) => {}
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 if quit.load(Ordering::Relaxed) {
                     println!("  vbd resident: consent received, resting");
                     let _ = tracer.emit_ok(crate::trace::Verb::Yield, cell_id);
                     break Ok(());
+                }
+                if !monitors_active {
+                    if let Ok(n) = spawn_monitors(code, tx.clone()) {
+                        if n > 0 {
+                            monitors_active = true;
+                            println!("  [input] hotkey listeners connected");
+                        }
+                    }
                 }
                 continue;
             }
