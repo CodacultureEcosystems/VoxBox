@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=VoxBox
+GenericName=Voice Dictation & Voice Shell
+Comment=Speech-to-text for every app on the desktop, plus a voice shell
+Exec=voxbox dictation
+TryExec=vbd
+Icon=voxbox
+Terminal=false
+Categories=Utility;Accessibility;AudioVideo;
+Keywords=voice;dictation;speech;whisper;stt;tts;microphone;
+StartupNotify=false
+X-GNOME-UsesNotifications=true

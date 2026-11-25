@@ -4,7 +4,7 @@ use clap::Parser;
 #[command(
     name = "voxbox",
     version,
-    about = "Voice-first shell for Linux: speaks, listens, and runs commands on the whole PC."
+    about = "VoxBox Station: speaks, listens, and runs commands on the whole PC."
 )]
 pub struct Args {
     /// Path to config.toml (default: ~/.config/voxbox/config.toml)
@@ -26,6 +26,20 @@ pub struct Args {
     /// Override the TTS engine for this session
     #[arg(long, value_enum)]
     pub tts_engine: Option<TtsEngineArg>,
+
+    /// Station mode: interactive shell (default) or system-wide dictation resident
+    #[arg(value_enum)]
+    pub mode: Option<ModeArg>,
+}
+
+#[derive(clap::ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModeArg {
+    /// Interactive voice shell (default)
+    Shell,
+    /// System-wide dictation Being (same as the `vbd` binary)
+    Dictation,
+    /// Alias of `dictation`
+    Resident,
 }
 
 #[derive(clap::ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]

@@ -74,6 +74,24 @@ impl Default for BrainConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
+pub struct DictationConfig {
+    pub key: String,
+    pub injector: String,
+    pub notifications: bool,
+}
+
+impl Default for DictationConfig {
+    fn default() -> Self {
+        Self {
+            key: "scrolllock".into(),
+            injector: "auto".into(),
+            notifications: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
 pub struct ExecutorConfig {
     pub timeout_secs: u64,
     pub blocklist: Vec<String>,
@@ -137,6 +155,7 @@ pub struct Config {
     pub stt: SttConfig,
     pub audio: AudioConfig,
     pub tts: TtsConfig,
+    pub dictation: DictationConfig,
     pub brain: BrainConfig,
     pub executor: ExecutorConfig,
     pub ui: UiConfig,

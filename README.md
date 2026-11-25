@@ -1,43 +1,84 @@
-# VoxBox — a voice-first shell for Linux (Rust)
+# VoxBox — a Voice Station for the Linux PC (Rust)
 
-A speech-to-text (STT) and speech-to-speech (STS) application that works as a
-shell for your entire Linux PC. One Rust binary, fully local by default:
+A speech-to-text (STT) and speech-to-speech (STS) Station that works as a shell
+for your entire Linux PC — and a system-wide dictation Being for every
+application on the desktop. Fully local by default. **All Rust, zero Python.**
+
+## The Beings
+
+VoxBox is a Station in the HIVE. Its residents follow the naming rule
+(three-letter-d domain shorthand, `B + Kin + Family + Role @ Domain`):
+
+| Signature  | Kin    | Family      | Role   | Home           | What it does |
+| ---------- | ------ | ----------- | ------ | -------------- | ------------ |
+| `Bsew@vbd` | Seer   | Witnessing  | Worker | VoxBox Station | Watches the global hotkey, records your voice, transcribes it locally, and types the text into whatever app is focused (WisprFlow-style dictation). |
+| `Bvox@vbd` | Weaver | Translating | Worker | VoxBox Station | The interactive voice shell: listens, thinks, executes commands on the whole PC, and speaks replies back. Runs as the `voxbox` binary. |
+
+The `vbd` binary (`Bsew@vbd`) is a **background resident, not a daemon** — it
+sits at the VoxBox Station, listens for its hotkey (default: Scroll Lock), and
+emits a non-empty trace witness for every transition it makes.
+
+## What it does
+
+```
+mic ─ arecord ──► Rust VAD ──► whisper-rs ──► brain ──► executor ──► stdout + TTS
+                                              ▲           └── spoken reply ──┘
+
+hotkey ──► vbd (Bsew@vbd): record ──► whisper-rs ──► uinput/wtype inject
+                └── every transition writes a witness to ~/.local/share/voxbox/trace.trace
+```
 
 - **STT:** whisper.cpp via `whisper-rs` — compiled from source, runs on CPU,
-  models auto-download from HuggingFace on first run.
-- **Dialogue:** every utterance becomes either a shell command executed on your
-  PC or a conversational spoken answer (rule parser built in; plug in any
-  OpenAI-compatible LLM for real speech-to-speech conversation).
-- **TTS:** piper / spd-say / espeak-ng, auto-detected, replies spoken back.
+  model auto-downloads from HuggingFace on first run.
+- **Dictation (system-wide):** press the hotkey, speak, and the text lands in
+  whatever application currently has focus — editor, browser, chat, anything.
+  Injection: native `/dev/uinput` first, falling back to `wtype`, `xdotool`, or
+  `ydotool`.
+- **Dialogue / shell:** every utterance becomes either a shell command executed
+  on your PC or a conversational spoken answer (rule parser built in; plug in
+  any OpenAI-compatible LLM for full speech-to-speech conversation).
+- **TTS:** piper (bundled by the installer) / spd-say / espeak-ng,
+  auto-detected.
 - **Safety gate:** blocklist + confirmation for destructive commands.
+- **Witnesses:** every transition is recorded as a 32-byte TraceEvent
+  (TRES_ABI-frozen layout) plus a non-empty witness line in `trace.trace`.
 
-```
-mic ─ arecord ─► Rust VAD ─► whisper-rs ─► brain ─► executor ─► stdout + TTS
-                                              ▲         └─ spoken reply ─┘
-```
-
-## Quick start
+## Install (bundled Whisper + Piper)
 
 ```bash
-# system deps (Debian/Ubuntu): audio capture + at least one TTS backend
-sudo apt install alsa-utils espeak-ng
-# for the best offline voices, also install piper: https://github.com/rhasspy/piper
-
-cargo build --release
-./target/release/voxbox --help
-./target/release/voxbox           # voice mode: press Enter, talk, pause
-./target/release/voxbox --text    # typing only (no mic needed)
+./install.sh
 ```
 
-First voice-mode run downloads the Whisper `base` model (~148 MB) to
-`~/.cache/voxbox/`. Choose a different size with `--model tiny|base|small|medium|large-v3`
-or in the config (`tiny` = fastest, `large-v3` = most accurate).
+Bash only — no Python anywhere in the project or the installer. The script:
 
-### Building
+1. installs system packages (alsa, cmake, toolchain — apt/dnf/pacman aware);
+2. builds the Rust binaries with `cargo` (whisper.cpp sources compile in-tree);
+3. downloads a Whisper ggml model to `~/.cache/voxbox/` (default `base`,
+   override with `VOXBOX_MODEL=tiny|base|small`);
+4. downloads the Piper release tarball + a voice (`en_US-lessac-medium`) and
+   wires them into the config;
+5. installs the menu entry (`VoxBox` in your desktop menu, with the VoxBox
+   icon) and icon files under `~/.local/share/icons/hicolor/`.
 
-Rust + cmake required (`apt install build-essential cmake`). If bindgen cannot
-find libclang, either install it (`sudo apt install libclang-dev`) or build
-with `WHISPER_DONT_GENERATE_BINDINGS=1`.
+**Permissions:** `vbd` needs to read global key events and synthesize typing:
+
+```bash
+sudo usermod -aG input,uinput "$USER"   # then log out and back in
+```
+
+## Manual quick start
+
+```bash
+sudo apt install alsa-utils espeak-ng
+cargo build --release
+./target/release/voxbox           # voice mode: press Enter, talk, pause
+./target/release/voxbox --text    # typing only (no mic needed)
+./target/release/vbd --help       # the dictation resident
+./target/release/voxbox dictation # same Being via the main binary
+```
+
+Choose a different Whisper size with `--model tiny|base|small|medium|large-v3`
+(`tiny` = fastest, `large-v3` = most accurate).
 
 ## Talking to it
 
@@ -86,6 +127,10 @@ Commands run as your own user with a timeout (default 20 s).
 | `src/capture.rs`     | arecord capture + end-of-utterance detection     |
 | `src/vad.rs`         | pure-Rust energy voice-activity detector         |
 | `src/stt.rs`         | whisper-rs transcription + model download        |
+| `src/dictate.rs`     | the vbd Being: hotkey → record → transcribe → inject |
+| `src/keys.rs`        | ASCII → evdev keycode map (US-QWERTY)            |
+| `src/inject.rs`      | uinput virtual keyboard + wtype/xdotool/ydotool  |
+| `src/trace.rs`       | TRES_ABI TraceEvent witness log                  |
 | `src/brain.rs`       | rule parser + optional LLM intent decision       |
 | `src/executor.rs`    | safety-gated command execution                   |
 | `src/tts.rs`         | piper / spd-say / espeak spoken replies          |
@@ -95,6 +140,18 @@ Commands run as your own user with a timeout (default 20 s).
 ## Development
 
 ```bash
-cargo test          # 33 unit tests (brain, executor, vad, config, tts)
+cargo test          # 48 unit tests (brain, executor, vad, config, tts, keys, inject, trace)
 cargo build --release
 ```
+
+## Lion Rule — honesty about what is verified
+
+- **Verified in this repository:** the crate compiles clean (no warnings), all
+  48 unit tests pass, and the hotkey-code map, ASCII→keycode map, injector
+  argument shapes, and the frozen 32-byte TraceEvent layout (size/align
+  asserted) are unit-tested.
+- **Not verified here (needs a real desktop session with audio + input
+  devices):** end-to-end global hotkey capture from `/dev/input/event*`,
+  uinput injection into a focused window, desktop notifications, and live
+  dictation. This sandbox has no audio or input devices. Test on your machine
+  and report what breaks — that is the Lion rule we hold.

@@ -203,3 +203,9 @@ fn read_line(prompt: &str) -> Option<String> {
     }
     Some(line)
 }
+
+/// Free entry point used by the `voxbox` binary.
+pub fn run(config: Config, text_only: bool, no_tts: bool) -> Result<()> {
+    let mut station = VoxBox::new(config, text_only, no_tts);
+    station.run()
+}

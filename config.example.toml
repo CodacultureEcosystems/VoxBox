@@ -43,3 +43,8 @@ confirm_patterns = [
 [ui]
 # Speak back every command result ("full"), errors only ("errors"), never ("none")
 feedback = "full"
+
+[dictation]
+key = "scrolllock"
+injector = "auto"          # auto | uinput | wtype | xdotool | ydotool | none
+notifications = true
