@@ -127,6 +127,12 @@ if [ ! -f "$CONFIG_DIR/config.toml" ]; then
     } > "$CONFIG_DIR/config.toml"
 fi
 
+if [ -f "$CONFIG_DIR/config.toml" ] && ! grep -q '^\[dictation\]' "$CONFIG_DIR/config.toml"; then
+    say "Adding [dictation] section to $CONFIG_DIR/config.toml"
+    printf '\n[dictation]\nkey = "scrolllock"\ninjector = "auto"\nnotifications = true\n' \
+        >> "$CONFIG_DIR/config.toml"
+fi
+
 # ── 7. desktop menu entry + icon + (optional) autostart ───────────────────
 say "Installing menu entry and icon"
 APPS_DIR="$HOME/.local/share/applications"

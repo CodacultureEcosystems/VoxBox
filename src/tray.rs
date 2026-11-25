@@ -39,13 +39,22 @@ pub fn decode_png_argb(png_bytes: &[u8]) -> Option<(i32, i32, Vec<u8>)> {
     let mut reader = decoder.read_info().ok()?;
     let mut buf = vec![0u8; reader.output_buffer_size()?];
     let info = reader.next_frame(&mut buf).ok()?;
-    let (w, h) = (info.width, info.height);
-    let src = &buf[..(w as usize) * (h as usize) * 4];
-    let mut argb = Vec::with_capacity(src.len());
-    for px in src.chunks_exact(4) {
-        argb.extend_from_slice(&[px[3], px[0], px[1], px[2]]); // RGBA8 -> ARGB32
+    let (w, h) = (info.width as usize, info.height as usize);
+    let mut argb = Vec::with_capacity(w * h * 4);
+    match info.color_type {
+        png::ColorType::Rgba => {
+            for px in buf[..w * h * 4].chunks_exact(4) {
+                argb.extend_from_slice(&[px[3], px[0], px[1], px[2]]); // RGBA8 -> ARGB32
+            }
+        }
+        png::ColorType::Rgb => {
+            for px in buf[..w * h * 3].chunks_exact(3) {
+                argb.extend_from_slice(&[255, px[0], px[1], px[2]]); // RGB8 -> opaque ARGB32
+            }
+        }
+        _ => return None,
     }
-    Some((w as i32, h as i32, argb))
+    Some((info.width as i32, info.height as i32, argb))
 }
 
 const TRAY_PNG: &[u8] = include_bytes!("../assets/voxbox-tray.png");

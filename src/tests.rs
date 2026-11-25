@@ -125,3 +125,28 @@ fn config_env_key_wins() {
     std::env::remove_var("VOXBOX_API_KEY");
     assert_eq!(c.brain.api_key, "sk-test");
 }
+
+#[test]
+fn config_merge_recovers_per_section() {
+    let raw = "[stt]\nmodel = \"tiny\"\n[dictation]\nkey = \"pause\"\nbad line here!!\n[tts]\nengine = \"piper\"\n";
+    let (cfg, warnings) = crate::config::Config::merge(raw);
+    assert_eq!(cfg.stt.model, "tiny");
+    assert_eq!(cfg.tts.engine, "piper");
+    assert_eq!(cfg.dictation.key, "scrolllock", "bad dictation section must default");
+    assert_eq!(warnings.len(), 2, "exactly recovery + dictation warnings, got {warnings:?}");
+    assert!(warnings[1].contains("[dictation]"), "{warnings:?}");
+}
+
+#[test]
+fn config_merge_clean_file_is_silent() {
+    let (cfg, warnings) = crate::config::Config::merge("model = \"base\"\n[dictation]\nkey = \"f13\"\n");
+    assert_eq!(cfg.dictation.key, "f13");
+    assert!(warnings.is_empty(), "{warnings:?}");
+}
+
+#[test]
+fn config_merge_empty_is_default() {
+    let (cfg, warnings) = crate::config::Config::merge("");
+    assert_eq!(cfg.dictation.key, "scrolllock");
+    assert!(warnings.is_empty());
+}
