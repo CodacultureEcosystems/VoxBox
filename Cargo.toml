@@ -1,6 +1,6 @@
 [package]
 name = "voxbox"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 description = "VoxBox Station: local Whisper STT, system-wide dictation (vbd), spoken replies, safe command execution."
 license = "MIT OR Apache-2.0"
@@ -27,6 +27,8 @@ libc = "0.2"
 dirs = "5"
 ureq = { version = "2", features = ["json"] }
 whisper-rs = { version = "0.16", optional = true }
+ksni = { version = "0.3.7", features = ["blocking"] }
+png = "0.18"
 
 [profile.release]
 lto = "thin"

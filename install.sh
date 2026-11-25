@@ -156,12 +156,15 @@ echo "    sudo usermod -aG uinput \$USER   # create /dev/uinput virtual keyboard
 echo "  Log out and back in afterwards."
 echo "  Or paste the udev rule from the README for uinput uaccess."
 
+CONFIGURED_KEY="$(sed -n 's/^key *= *"\(.*\)"$/\1/p' "$CONFIG_DIR/config.toml" 2>/dev/null | head -1)"
+
 cat <<EOF
 
   VoxBox installed.
     Desktop menu:   "VoxBox"  (right-click: dictation resident / voice shell / text)
+    Tray icon:      appears when the dictation resident runs (state + Record now + quit)
     Voice shell:    $INSTALL_BIN/voxbox
     AutoStart:      mkdir -p ~/.config/autostart &&
                     cp $APPS_DIR/voxbox.desktop ~/.config/autostart/
-    Hotkey:         ScrollLock (change in $CONFIG_DIR/config.toml → [dictation] key)
+    Hotkey:         ${CONFIGURED_KEY:-scrolllock}  (change in $CONFIG_DIR/config.toml → [dictation] key)
 EOF

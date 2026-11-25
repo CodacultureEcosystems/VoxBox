@@ -15,5 +15,6 @@ pub mod stt;
 #[cfg(test)]
 pub mod tests;
 pub mod trace;
+pub mod tray;
 pub mod tts;
 pub mod vad;

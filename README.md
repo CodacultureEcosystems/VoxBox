@@ -34,6 +34,9 @@ hotkey ──► vbd (Bsew@vbd): record ──► whisper-rs ──► uinput/wt
   whatever application currently has focus — editor, browser, chat, anything.
   Injection: native `/dev/uinput` first, falling back to `wtype`, `xdotool`, or
   `ydotool`.
+- **Tray Being:** while the dictation resident runs, a status icon (SNI over
+  D-Bus) shows idle/recording state and offers the mouse menu: *Record now*,
+  *Voice shell*, *Voice shell (text mode)*, *Quit*.
 - **Dialogue / shell:** every utterance becomes either a shell command executed
   on your PC or a conversational spoken answer (rule parser built in; plug in
   any OpenAI-compatible LLM for full speech-to-speech conversation).
@@ -181,9 +184,15 @@ keeps redistribution simple.
 ## Lion Rule — honesty about what is verified
 
 - **Verified in this repository:** the crate compiles clean (no warnings), all
-  48 unit tests pass, and the hotkey-code map, ASCII→keycode map, injector
-  argument shapes, and the frozen 32-byte TraceEvent layout (size/align
-  asserted) are unit-tested.
+  52 unit tests pass, and the hotkey-code map, ASCII→keycode map, injector
+  argument shapes, tray state/label/pixmap helpers, and the frozen 32-byte
+  TraceEvent layout (size/align asserted) are unit-tested.
+- **Not verified here (needs a real desktop session with audio + input
+  devices):** end-to-end global hotkey capture from `/dev/input/event*`,
+  uinput injection into a focused window, desktop notifications, **tray menu
+  interactions in a live desktop environment**, and live
+  dictation. This sandbox has no audio, input, or D-Bus session. Test on your
+  machine and report what breaks — that is the Lion rule we hold.
 - **Not verified here (needs a real desktop session with audio + input
   devices):** end-to-end global hotkey capture from `/dev/input/event*`,
   uinput injection into a focused window, desktop notifications, and live

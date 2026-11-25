@@ -3,7 +3,10 @@
 //! the text into whatever application is currently focused (WisprFlow-style).
 use anyhow::{anyhow, Result};
 use std::os::unix::io::AsRawFd;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
+use std::sync::Arc;
+use std::time::Duration;
 
 use crate::capture::Recorder;
 use crate::config::Config;
@@ -125,12 +128,12 @@ pub fn notify(enabled: bool, title: &str, body: &str) {
 }
 
 /// Resident entry point: wait for the hotkey, then record → transcribe → inject.
-pub fn run(config: Config, no_tts: bool) -> Result<()> {
+pub fn run(config: Config, _no_tts: bool) -> Result<()> {
     let key_name = config.dictation.key.clone();
+    let key_display = key_name.to_uppercase();
     let code = hotkey_code(&key_name)
         .ok_or_else(|| anyhow!("unknown hotkey {key_name:?} (see config [dictation].key)"))?;
     let notifications = config.dictation.notifications;
-    let redraw_text = !no_tts && config.tts.enabled;
 
     let recorder = Recorder {
         sample_rate: config.audio.sample_rate,
@@ -143,7 +146,7 @@ pub fn run(config: Config, no_tts: bool) -> Result<()> {
     let mut transcriber: Option<Transcriber> = None;
 
     let (tx, rx) = mpsc::channel::<()>();
-    let started = spawn_monitors(code, tx)?;
+    let started = spawn_monitors(code, tx.clone())?;
     if started == 0 {
         return Err(anyhow!(
             "no readable input devices under /dev/input; add your user to the input group: \
@@ -151,28 +154,55 @@ pub fn run(config: Config, no_tts: bool) -> Result<()> {
         ));
     }
 
+    let quit = Arc::new(AtomicBool::new(false));
+    let tray = crate::tray::spawn(&key_name, tx, Arc::clone(&quit));
+
     let injector_hint = config.dictation.injector.clone();
     let cell_id = (std::process::id() as u64) << 16 | (code as u64);
     let mut tracer = crate::trace::TraceLog::open(crate::trace::TraceLog::default_path())?;
     let _ = tracer.emit_ok(crate::trace::Verb::Sprout, cell_id);
     println!(
-        "  VoxBox dictation: press {} to talk; text lands in the focused app",
-        key_name.to_uppercase()
+        "  VoxBox dictation: press {key_display} (or the tray 'Record now') to talk; \
+         text lands in the focused app"
     );
     println!("  injector: {injector_hint}; notifications: {notifications}");
-    notify(notifications, "VoxBox", &format!("Listening — press {}", key_name.to_uppercase()));
+    notify(
+        notifications,
+        "VoxBox",
+        &format!("Listening — press {key_display}"),
+    );
 
     loop {
-        rx.recv().map_err(|_| anyhow!("hotkey watchers stopped"))?;
+        match rx.recv_timeout(Duration::from_millis(300)) {
+            Ok(()) => {}
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                if quit.load(Ordering::Relaxed) {
+                    println!("  vbd resident: consent received, resting");
+                    let _ = tracer.emit_ok(crate::trace::Verb::Yield, cell_id);
+                    break Ok(());
+                }
+                continue;
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                return Err(anyhow!("hotkey watchers stopped"));
+            }
+        }
+        if quit.load(Ordering::Relaxed) {
+            println!("  vbd resident: consent received, resting");
+            let _ = tracer.emit_ok(crate::trace::Verb::Yield, cell_id);
+            break Ok(());
+        }
         // Debounce repeats/extra presses.
         while rx.try_recv().is_ok() {}
-        std::thread::sleep(std::time::Duration::from_millis(150));
+        std::thread::sleep(Duration::from_millis(150));
         while rx.try_recv().is_ok() {}
 
         println!("  ● recording — speak, then pause");
+        crate::tray::set_state(&tray, true);
         let rec = match recorder.record() {
             Ok(r) => r,
             Err(e) => {
+                crate::tray::set_state(&tray, false);
                 println!("  [listen] {e:#}");
                 let _ = tracer.emit_fail(
                     crate::trace::Verb::Yield,
@@ -183,6 +213,7 @@ pub fn run(config: Config, no_tts: bool) -> Result<()> {
                 continue;
             }
         };
+        crate::tray::set_state(&tray, false);
 
         if transcriber.is_none() {
             match Transcriber::new(&stt_cfg.model, &stt_cfg.language) {
@@ -233,10 +264,6 @@ pub fn run(config: Config, no_tts: bool) -> Result<()> {
                 println!("  ▶ typed: {text}");
                 let _ = tracer.emit_ok(crate::trace::Verb::Yield, cell_id);
                 notify(notifications, "VoxBox", &text);
-                if redraw_text {
-                    // keep the shell speaker out of the dictation hot path;
-                    // a soft chime like audio could go here later
-                }
             }
             Err(e) => {
                 println!("  [inject] {e:#}");
