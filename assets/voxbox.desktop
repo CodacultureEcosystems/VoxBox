@@ -11,3 +11,16 @@ Categories=Utility;Accessibility;AudioVideo;
 Keywords=voice;dictation;speech;whisper;stt;tts;microphone;
 StartupNotify=false
 X-GNOME-UsesNotifications=true
+Actions=dictation;shell;textshell;
+
+[Desktop Action dictation]
+Name=Dictation (vbd resident: hotkey -> speech -> typed text)
+Exec=vbd
+
+[Desktop Action shell]
+Name=Voice shell (speak commands, spoken replies)
+Exec=voxbox
+
+[Desktop Action textshell]
+Name=Voice shell, text mode (no microphone)
+Exec=voxbox --text

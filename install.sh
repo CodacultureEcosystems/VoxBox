@@ -138,7 +138,11 @@ if [ -f "$REPO_DIR/assets/voxbox.png" ]; then
     install -m 0644 "$REPO_DIR/assets/voxbox.png" \
         "$HOME/.local/share/icons/hicolor/512x512/apps/voxbox.png"
 fi
-sed "s|^Exec=.*|Exec=$INSTALL_BIN/voxbox dictation|; s|^TryExec=.*|TryExec=$INSTALL_BIN/vbd|" \
+sed -e "s|^Exec=voxbox dictation|Exec=$INSTALL_BIN/voxbox dictation|" \
+    -e "s|^Exec=vbd$|Exec=$INSTALL_BIN/vbd|" \
+    -e "s|^Exec=voxbox$|Exec=$INSTALL_BIN/voxbox|" \
+    -e "s|^Exec=voxbox --text|Exec=$INSTALL_BIN/voxbox --text|" \
+    -e "s|^TryExec=vbd|TryExec=$INSTALL_BIN/vbd|" \
     "$REPO_DIR/assets/voxbox.desktop" > "$APPS_DIR/voxbox.desktop"
 command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$APPS_DIR" || true
 command -v gtk-update-icon-cache >/dev/null 2>&1 && \
@@ -155,7 +159,7 @@ echo "  Or paste the udev rule from the README for uinput uaccess."
 cat <<EOF
 
   VoxBox installed.
-    Desktop menu:   "VoxBox"  (launches vbd, the VoxBox dictation resident)
+    Desktop menu:   "VoxBox"  (right-click: dictation resident / voice shell / text)
     Voice shell:    $INSTALL_BIN/voxbox
     AutoStart:      mkdir -p ~/.config/autostart &&
                     cp $APPS_DIR/voxbox.desktop ~/.config/autostart/
