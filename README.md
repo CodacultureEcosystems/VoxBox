@@ -144,6 +144,12 @@ cargo test          # 48 unit tests (brain, executor, vad, config, tts, keys, in
 cargo build --release
 ```
 
+## License
+
+Dual-licensed under **MIT OR Apache-2.0** (`LICENSE-MIT`, `LICENSE-APACHE`) —
+you may choose either. The Apache grants an explicit patent license; the MIT
+keeps redistribution simple.
+
 ## Lion Rule — honesty about what is verified
 
 - **Verified in this repository:** the crate compiles clean (no warnings), all
