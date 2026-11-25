@@ -46,8 +46,35 @@ hotkey ──► vbd (Bsew@vbd): record ──► whisper-rs ──► uinput/wt
 ## Install (bundled Whisper + Piper)
 
 ```bash
+# fresh install — the whole thing in five lines
+git clone https://github.com/CodacultureEcosystems/VoxBox.git
+cd VoxBox
 ./install.sh
+sudo usermod -aG input,uinput "$USER"   # then log out and back in
 ```
+
+### Upgrading (or replacing an old copy)
+
+Everything VoxBox installs lives under your home directory, so removal is
+one block — no system packages to uninstall:
+
+```bash
+pkill -f vbd 2>/dev/null; pkill -f voxbox 2>/dev/null
+rm -rf ~/.local/bin/voxbox ~/.local/bin/vbd ~/.local/bin/piper \
+       ~/.config/voxbox ~/.local/share/voxbox ~/.cache/voxbox \
+       ~/.local/share/applications/voxbox.desktop \
+       ~/.config/autostart/voxbox.desktop \
+       ~/.local/share/icons/hicolor/scalable/apps/voxbox.svg \
+       ~/.local/share/icons/hicolor/512x512/apps/voxbox.png
+
+# then re-clone at the latest tag and reinstall
+git clone --branch v0.2.1 --depth 1 \
+    https://github.com/CodacultureEcosystems/VoxBox.git VoxBox
+cd VoxBox && ./install.sh
+sudo usermod -aG input,uinput "$USER"   # then log out and back in
+```
+
+### What the installer does
 
 Bash only — no Python anywhere in the project or the installer. The script:
 
@@ -58,7 +85,8 @@ Bash only — no Python anywhere in the project or the installer. The script:
 4. downloads the Piper release tarball + a voice (`en_US-lessac-medium`) and
    wires them into the config;
 5. installs the menu entry (`VoxBox` in your desktop menu, with the VoxBox
-   icon) and icon files under `~/.local/share/icons/hicolor/`.
+   icon; right-click the panel button to pick: dictation resident / voice
+   shell / text mode) and icon files under `~/.local/share/icons/hicolor/`.
 
 **Permissions:** `vbd` needs to read global key events and synthesize typing:
 
