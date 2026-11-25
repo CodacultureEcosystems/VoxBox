@@ -30,15 +30,15 @@ if command -v apt-get >/dev/null 2>&1; then
     say "Installing system packages (alsa, cmake, toolchain)"
     sudo apt-get update -qq
     sudo apt-get install -y build-essential cmake libclang-dev alsa-utils \
-        espeak-ng libasound2-dev
+        espeak-ng libasound2-dev xdotool
 elif command -v dnf >/dev/null 2>&1; then
     say "Installing system packages (alsa, cmake, toolchain)"
     sudo dnf install -y gcc gcc-c++ cmake clang alsa-lib-devel alsa-utils \
-        espeak-ng
+        espeak-ng xdotool
 elif command -v pacman >/dev/null 2>&1; then
     say "Installing system packages (alsa, cmake, toolchain)"
     sudo pacman -S --noconfirm base-devel cmake clang alsa-lib alsa-utils \
-        espeak-ng
+        espeak-ng xdotool
 else
     echo "  (skip) unknown distro: install build tools + alsa-utils + espeak-ng manually" >&2
 fi
