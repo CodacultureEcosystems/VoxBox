@@ -482,16 +482,38 @@ impl eframe::App for StudioApp {
     }
 }
 
+/// eframe options whose event loop is allowed to live on a non-main thread.
+///
+/// winit panics if an `EventLoop` is created off the main thread unless the
+/// platform extension trait's `with_any_thread(true)` is applied — which
+/// killed the desktop tile (`voxbox-tile-spawn` thread) and the tray-opened
+/// Studio window (`voxbox-studio` thread) with exactly that panic. This hook
+/// sets the flag for both the X11 and Wayland backends.
+fn native_opts(viewport: egui::ViewportBuilder) -> eframe::NativeOptions {
+    eframe::NativeOptions {
+        viewport,
+        event_loop_builder: Some(Box::new(|builder| {
+            #[cfg(target_os = "linux")]
+            {
+                winit::platform::x11::EventLoopBuilderExtX11::with_any_thread(builder, true);
+                winit::platform::wayland::EventLoopBuilderExtWayland::with_any_thread(builder, true);
+            }
+            #[cfg(not(target_os = "linux"))]
+            let _ = builder;
+        })),
+        ..Default::default()
+    }
+}
+
 /// Open the Studio window. Runs its own event loop; call from any thread.
 pub fn launch(c: StudioCtx) {
     let app = StudioApp::new(&c);
-    let opts = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
+    let opts = native_opts(
+        egui::ViewportBuilder::default()
             .with_inner_size([460.0, 640.0])
             .with_min_inner_size([420.0, 520.0])
             .with_title("VoxBox Studio"),
-        ..Default::default()
-    };
+    );
     let flag = Arc::clone(&c.open_flag);
     let _ = eframe::run_native(
         "VoxBox Studio",
@@ -752,13 +774,12 @@ pub fn launch_tile(c: TileCtx) {
         last_event_note: String::new(),
     };
     let flag = Arc::clone(&c.open_flag);
-    let opts = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
+    let opts = native_opts(
+        egui::ViewportBuilder::default()
             .with_inner_size([120.0, 150.0])
             .with_resizable(false)
             .with_title("VoxBox"),
-        ..Default::default()
-    };
+    );
     let result = eframe::run_native(
         "VoxBox tile",
         opts,

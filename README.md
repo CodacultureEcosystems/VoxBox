@@ -196,7 +196,7 @@ Commands run as your own user with a timeout (default 20 s).
 ## Development
 
 ```bash
-cargo test          # 71 unit tests (brain, executor, vad, config, tts, keys, inject, tile)
+cargo test          # 73 unit tests (brain, executor, vad, config, tts, keys, inject, tile)
 cargo build --release
 ```
 
@@ -209,7 +209,7 @@ keeps redistribution simple.
 ## Lion Rule — honesty about what is verified
 
 - **Verified in this repository / sandbox:** the crate compiles clean (no
-  warnings), all 71 unit tests pass; hotkey-code map, ASCII→keycode map,
+  warnings), all 73 unit tests pass; hotkey-code map, ASCII→keycode map,
   injector argument shapes, tray state/label/pixmap helpers, tile pointer
   gestures (pure state machine), config set-subkey/agent loading, and the
   frozen 32-byte TraceEvent layout (size/align asserted) are unit-tested.
@@ -218,6 +218,15 @@ keeps redistribution simple.
   speech sample ("And so, my fellow Americans, ask not what your country can
   do for you…") with no ONNX Runtime — the engine works on a stock Debian
   box without `pkg-config`/OpenSSL.
+- **v0.3.2 fixes:** the desktop tile and tray-opened Studio window now set
+  winit's `any_thread` flag via eframe's `event_loop_builder` hook — without
+  it, winit panics when an event loop is created off the main thread, which
+  is exactly why the tile never appeared on 0.3.1 (the panic was captured in
+  the user's log). The fix is compile- and test-verified in the sandbox; live
+  window display still needs your desktop. Whisper hallucination filtering
+  ("[Music]", "(upbeat music)", "What music is playing?" in a quiet house)
+  is unit-tested against the exact strings observed on the user's machine:
+  filtered utterances type nothing and notify "No words detected".
 - **Not verified here (needs a real desktop session with audio + input
   devices):** end-to-end global hotkey capture from `/dev/input/event*`,
   uinput injection into a focused window, desktop notifications, tray menu and

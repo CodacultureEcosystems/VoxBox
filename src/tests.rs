@@ -244,3 +244,33 @@ fn tile_pointer_is_testable_purely() {
     );
     assert_eq!(TileEvent::Toggle, TileEvent::Toggle);
 }
+
+#[test]
+fn hallucination_bracketed_noise_is_filtered() {
+    use crate::stt::is_hallucination;
+    // The exact garbage the user saw typed in a quiet house:
+    assert!(is_hallucination("[Music]"));
+    assert!(is_hallucination("[MUSIC PLAYING]"));
+    assert!(is_hallucination("(upbeat music)"));
+    assert!(is_hallucination("What music is playing?"));
+    assert!(is_hallucination("[Music]  What music is playing?"));
+    assert!(is_hallucination("[Music] Hello?".replace("Hello?", "").trim()));
+    assert!(is_hallucination("\u{266A} \u{266A}"));
+    assert!(is_hallucination(""));
+    assert!(is_hallucination("   "));
+    assert!(is_hallucination("Thank you."));
+    assert!(is_hallucination("Thanks for watching!"));
+    assert!(is_hallucination("SUBSCRIBE"));
+}
+
+#[test]
+fn hallucination_real_speech_survives() {
+    use crate::stt::is_hallucination;
+    // Real words must always pass through, even with noise markers around them.
+    assert!(!is_hallucination("Hello?"));
+    assert!(!is_hallucination("[Music]  Hello?"));
+    assert!(!is_hallucination("And so, my fellow Americans, ask not what your country can do for you."));
+    assert!(!is_hallucination("open the terminal"));
+    assert!(!is_hallucination("(upbeat music) turn off the lights"));
+    assert!(!is_hallucination("What music is playing in the other room?"));
+}

@@ -37,6 +37,84 @@ impl SttEngine {
     }
 }
 
+/// Canned lines Whisper invents for silence, hum, or background noise
+/// (normalized: lowercase, punctuation stripped). If the whole utterance
+/// reduces to one of these, nothing gets typed.
+const NOISE_LINES: &[&str] = &[
+    "applause",
+    "background music",
+    "background noise",
+    "bye",
+    "bye bye",
+    "huh",
+    "hmm",
+    "hmm hmm",
+    "laughter",
+    "mm",
+    "mm hmm",
+    "music",
+    "music is playing",
+    "music playing",
+    "oh my god",
+    "playing music",
+    "silence",
+    "soft music",
+    "subscribe",
+    "thank you",
+    "thank you for watching",
+    "thank you very much",
+    "thanks for watching",
+    "um",
+    "upbeat music",
+    "uh",
+    "what music is playing",
+    "you",
+];
+
+/// Remove stage-direction groups — `[Music]`, `(upbeat music)`, `{...}`,
+/// fullwidth brackets, and bare music notes (♪ ♫) — that whisper emits for
+/// non-speech audio.
+fn strip_stage_directions(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut depth = 0usize;
+    for ch in text.chars() {
+        match ch {
+            '[' | '(' | '{' | '\u{3010}' | '\u{FF08}' => depth += 1,
+            ']' | ')' | '}' | '\u{3011}' | '\u{FF09}' => depth = depth.saturating_sub(1),
+            '\u{266A}' | '\u{266B}' | '\u{266C}' | '\u{266D}' => {}
+            _ if depth == 0 => out.push(ch),
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Lowercase, keep only letters/digits/spaces, collapse whitespace.
+fn normalize_words(text: &str) -> String {
+    let mut out = String::new();
+    for ch in text.chars().flat_map(char::to_lowercase) {
+        if ch.is_alphanumeric() {
+            out.push(ch);
+        } else if !out.is_empty() && !out.ends_with(' ') {
+            out.push(' ');
+        }
+    }
+    out.trim().to_string()
+}
+
+/// Decide whether a transcription is hallucinated non-speech.
+///
+/// True when stripping stage directions leaves nothing, or when what remains
+/// is exactly one of Whisper's canned noise lines ("[Music]  What music is
+/// playing?" in a quiet house, "(upbeat music)", "Thank you.", ...).
+pub fn is_hallucination(text: &str) -> bool {
+    let norm = normalize_words(&strip_stage_directions(text));
+    if norm.is_empty() {
+        return true;
+    }
+    NOISE_LINES.contains(&norm.as_str())
+}
+
 /// Parse an engine name; unknown names fall back to whisper.
 pub fn engine_from(name: &str) -> SttEngine {
     match name.trim().to_lowercase().as_str() {
@@ -243,11 +321,18 @@ impl Transcriber {
     }
 
     /// Transcribe 16 kHz mono S16_LE PCM into text.
+    ///
+    /// Hallucinated non-speech ("[Music]", "Thank you." in a silent room)
+    /// is filtered and returned as an empty string.
     pub fn transcribe(&mut self, pcm16: &[u8], sample_rate: u32) -> Result<String> {
-        match self.engine {
-            SttEngine::Parakeet => self.transcribe_parakeet(pcm16, sample_rate),
-            SttEngine::Whisper => self.transcribe_whisper(pcm16, sample_rate),
+        let text = match self.engine {
+            SttEngine::Parakeet => self.transcribe_parakeet(pcm16, sample_rate)?,
+            SttEngine::Whisper => self.transcribe_whisper(pcm16, sample_rate)?,
+        };
+        if is_hallucination(&text) {
+            return Ok(String::new());
         }
+        Ok(text)
     }
 
     #[cfg(feature = "whisper")]
@@ -271,6 +356,11 @@ impl Transcriber {
         params.set_print_special(false);
         params.set_print_realtime(false);
         params.set_print_timestamps(false);
+        // Noise hardening: don't condition on previous utterances (carries
+        // hallucinations forward), suppress blank/non-speech tokens (♪, [Music]).
+        params.set_no_context(true);
+        params.set_suppress_blank(true);
+        params.set_suppress_nst(true);
 
         state.full(params, &samples[..])?;
 

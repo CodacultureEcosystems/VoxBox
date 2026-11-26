@@ -223,6 +223,12 @@ echo "   which the groupadd created if it was missing on your distro.)"
 
 CONFIGURED_KEY="$(sed -n 's/^key *= *"\(.*\)"$/\1/p' "$CONFIG_DIR/config.toml" 2>/dev/null | head -1)"
 
+if [ "$WITH_PARAKEET" = "1" ]; then
+  ENGINES_NOTE="parakeet model downloaded (ready in Studio)"
+else
+  ENGINES_NOTE="parakeet model (~2.5 GB) downloads on first use, or pre-fetch with: bash install.sh --with-parakeet"
+fi
+
 cat <<EOF
 
   VoxBox installed.
@@ -234,8 +240,7 @@ cat <<EOF
     Studio window:  left-click the tray Being, or menu → "VoxBox" (vbd --window)
     Tray icon:      appears when the dictation resident runs (state + Record now + quit)
     Engines:        Studio → Speech engine — whisper | parakeet
-                    (${WITH_PARAKEET:+parakeet model downloaded}${WITH_PARAKEET:-parakeet model (~2.5 GB) downloads on first use,
-                    or pre-fetch now with: bash install.sh --with-parakeet})
+                    (${ENGINES_NOTE})
     Agents:         $CONFIG_DIR/agents/*.toml — pick them in Studio → AI agents
     Voice shell:    $INSTALL_BIN/voxbox
     AutoStart:      mkdir -p ~/.config/autostart &&
