@@ -11,10 +11,54 @@ use std::time::Duration;
 use crate::capture::Recorder;
 use crate::config::Config;
 use crate::inject::Injector;
-use crate::stt::Transcriber;
+use crate::stt::{self, SttEngine, Transcriber};
 
 const EV_SYN: u16 = 0x00;
 const EV_KEY: u16 = 0x01;
+
+/// A control signal for the dictation resident. Sources: global hotkey
+/// watchers, the tray Being, the Studio window, and the desktop tile.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Signal {
+    Toggle,
+    HoldStart,
+    Constant(bool),
+    Reload,
+}
+
+/// Atomics shared with the tile window. Written directly for hold-release
+/// so a recording in flight can be stopped without channel round-trips.
+#[derive(Debug, Default)]
+pub struct Controls {
+    pub constant: AtomicBool,
+    pub hold_release: AtomicBool,
+}
+
+impl Controls {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
+    pub fn constant(&self) -> bool {
+        self.constant.load(Ordering::Relaxed)
+    }
+}
+
+/// What to warm up in the background when (re)building the Transcriber.
+struct WarmSpec {
+    engine: SttEngine,
+    model: String,
+    language: String,
+}
+
+impl WarmSpec {
+    fn from_config(config: &Config) -> Self {
+        Self {
+            engine: stt::engine_from(&config.stt.engine),
+            model: config.stt.model.clone(),
+            language: config.stt.language.clone(),
+        }
+    }
+}
 
 /// Map a hotkey name to its evdev key code.
 pub fn hotkey_code(name: &str) -> Option<u16> {
@@ -54,7 +98,7 @@ pub fn hotkey_code(name: &str) -> Option<u16> {
 }
 
 /// Spawn one watcher thread per input device; each forwards hotkey presses.
-fn spawn_monitors(code: u16, tx: mpsc::Sender<()>) -> Result<usize> {
+fn spawn_monitors(code: u16, tx: mpsc::Sender<Signal>) -> Result<usize> {
     let mut spawned = 0usize;
     let mut devices: Vec<String> = std::fs::read_dir("/dev/input")?
         .filter_map(|e| e.ok())
@@ -82,7 +126,7 @@ fn spawn_monitors(code: u16, tx: mpsc::Sender<()>) -> Result<usize> {
     Ok(spawned)
 }
 
-fn watch_device(path: &str, hotkey: u16, tx: mpsc::Sender<()>) {
+fn watch_device(path: &str, hotkey: u16, tx: mpsc::Sender<Signal>) {
     let file = match std::fs::File::open(path) {
         Ok(f) => f,
         Err(_) => return,
@@ -108,7 +152,7 @@ fn watch_device(path: &str, hotkey: u16, tx: mpsc::Sender<()>) {
         let ev_code = u16::from_le_bytes([bytes[18], bytes[19]]);
         let value = i32::from_le_bytes([bytes[20], bytes[21], bytes[22], bytes[23]]);
         if ev_type == EV_KEY && ev_code == hotkey && value == 1 {
-            if tx.send(()).is_err() {
+            if tx.send(Signal::Toggle).is_err() {
                 return;
             }
         }
@@ -127,8 +171,34 @@ pub fn notify(enabled: bool, title: &str, body: &str) {
         .status();
 }
 
-/// Resident entry point: wait for the hotkey, then record → transcribe → inject.
-pub fn run(config: Config, _no_tts: bool) -> Result<()> {
+/// Warm a Transcriber in the background; sends the built instance (or the
+/// error) through the channel.
+fn spawn_warmup(spec: WarmSpec, tx: mpsc::Sender<Result<Transcriber>>) {
+    println!(
+        "  [stt] warming {} ({}) in the background…",
+        spec.engine.as_str(),
+        if spec.model.is_empty() {
+            "bundled"
+        } else {
+            &spec.model
+        }
+    );
+    let _ = std::thread::Builder::new()
+        .name("voxbox-stt-warm".into())
+        .spawn(move || {
+            let _ = tx.send(
+                Transcriber::with_engine(spec.engine, &spec.model, &spec.language).and_then(
+                    |mut t| {
+                        t.preload()?;
+                        Ok(t)
+                    },
+                ),
+            );
+        });
+}
+
+/// Resident entry point: wait for signals, then record → transcribe → inject.
+pub fn run(config: Config, config_path: Option<&str>) -> Result<()> {
     let key_name = config.dictation.key.clone();
     let key_display = key_name.to_uppercase();
     let code = hotkey_code(&key_name)
@@ -142,27 +212,20 @@ pub fn run(config: Config, _no_tts: bool) -> Result<()> {
         threshold: config.audio.threshold,
         frame_ms: 30,
     };
-    let stt_cfg = config.stt.clone();
     let mut transcriber: Option<Transcriber> = None;
 
-    let (tx, rx) = mpsc::channel::<()>();
+    let (tx, rx) = mpsc::channel::<Signal>();
     let quit = Arc::new(AtomicBool::new(false));
-    let tray = crate::tray::spawn(&key_name, tx.clone(), Arc::clone(&quit));
+    let controls = Controls::new();
+    let tray = crate::tray::spawn(
+        &key_name,
+        tx.clone(),
+        Arc::clone(&quit),
+        Arc::clone(&controls),
+    );
 
     let (pre_tx, pre_rx) = mpsc::channel::<Result<Transcriber>>();
-    {
-        let model = stt_cfg.model.clone();
-        let language = stt_cfg.language.clone();
-        println!("  [stt] warming whisper ({}) in the background…", if model.is_empty() { "base" } else { &model });
-        let _ = std::thread::Builder::new()
-            .name("voxbox-stt-warm".into())
-            .spawn(move || {
-                let _ = pre_tx.send(Transcriber::new(&model, &language).and_then(|mut t| {
-                    t.preload()?;
-                    Ok(t)
-                }));
-            });
-    }
+    spawn_warmup(WarmSpec::from_config(&config), pre_tx);
 
     let started = spawn_monitors(code, tx.clone())?;
     let mut monitors_active = started > 0;
@@ -189,9 +252,12 @@ pub fn run(config: Config, _no_tts: bool) -> Result<()> {
         &format!("Listening — press {key_display}"),
     );
 
+    // Warm-up receiver for the currently selected engine; reset on Reload.
+    let mut warm: Option<mpsc::Receiver<Result<Transcriber>>> = Some(pre_rx);
+
     loop {
-        match rx.recv_timeout(Duration::from_secs(5)) {
-            Ok(()) => {}
+        let sig = match rx.recv_timeout(Duration::from_secs(5)) {
+            Ok(s) => s,
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 if quit.load(Ordering::Relaxed) {
                     println!("  vbd resident: consent received, resting");
@@ -211,101 +277,207 @@ pub fn run(config: Config, _no_tts: bool) -> Result<()> {
             Err(mpsc::RecvTimeoutError::Disconnected) => {
                 return Err(anyhow!("hotkey watchers stopped"));
             }
-        }
+        };
         if quit.load(Ordering::Relaxed) {
             println!("  vbd resident: consent received, resting");
             let _ = tracer.emit_ok(crate::trace::Verb::Yield, cell_id);
             break Ok(());
         }
-        // Debounce repeats/extra presses.
+        // Drain repeats/extra signals from the same burst.
         while rx.try_recv().is_ok() {}
-        std::thread::sleep(Duration::from_millis(150));
-        while rx.try_recv().is_ok() {}
+
+        match sig {
+            Signal::Reload => {
+                transcriber = None;
+                let fresh = Config::load(config_path);
+                let (t2, r2) = mpsc::channel::<Result<Transcriber>>();
+                warm = Some(r2);
+                spawn_warmup(WarmSpec::from_config(&fresh), t2);
+                println!("  [stt] reloading engine/settings in the background…");
+                continue;
+            }
+            Signal::Constant(on) => {
+                controls.constant.store(on, Ordering::Relaxed);
+                if !on {
+                    // Ends any utterance currently in flight.
+                    controls.hold_release.store(true, Ordering::Relaxed);
+                    println!("  ◉ constant mode OFF");
+                    notify(notifications, "VoxBox", "Constant mode off");
+                    continue;
+                }
+                println!(
+                    "  ◉ constant mode ON — speak freely; double-click the tile (or press {key_display}) to stop"
+                );
+                notify(notifications, "VoxBox", "Constant mode on");
+                while controls.constant() {
+                    crate::tray::set_state(&tray, true);
+                    let rec = recorder.record_with(Some(&controls.hold_release), false);
+                    crate::tray::set_state(&tray, false);
+                    match rec {
+                        Ok(r) => deliver(
+                            &mut transcriber,
+                            &mut warm,
+                            &r,
+                            &mut tracer,
+                            cell_id,
+                            notifications,
+                            &injector_hint,
+                        ),
+                        Err(e) => {
+                            if !controls.constant() {
+                                break;
+                            }
+                            unusable(&mut tracer, cell_id, notifications, e);
+                        }
+                    }
+                }
+                continue;
+            }
+            Signal::HoldStart => {
+                controls.hold_release.store(false, Ordering::Relaxed);
+                println!("  ● hold recorded — release to land the text");
+                crate::tray::set_state(&tray, true);
+                let rec = recorder.record_with(Some(&controls.hold_release), true);
+                crate::tray::set_state(&tray, false);
+                match rec {
+                    Ok(r) => deliver(
+                        &mut transcriber,
+                        &mut warm,
+                        &r,
+                        &mut tracer,
+                        cell_id,
+                        notifications,
+                        &injector_hint,
+                    ),
+                    Err(e) => unusable(&mut tracer, cell_id, notifications, e),
+                }
+                continue;
+            }
+            Signal::Toggle => {}
+        }
+
+        if controls.constant() {
+            // A toggle while constant mode runs switches it off, ending
+            // the current utterance cleanly.
+            controls.constant.store(false, Ordering::Relaxed);
+            controls.hold_release.store(true, Ordering::Relaxed);
+            println!("  ◉ constant mode OFF");
+            continue;
+        }
 
         println!("  ● recording — speak, then pause");
         crate::tray::set_state(&tray, true);
-        let rec = match recorder.record() {
-            Ok(r) => r,
-            Err(e) => {
-                crate::tray::set_state(&tray, false);
-                println!("  [listen] {e:#}");
+        let rec = recorder.record_with(None, false);
+        crate::tray::set_state(&tray, false);
+        match rec {
+            Ok(r) => deliver(
+                &mut transcriber,
+                &mut warm,
+                &r,
+                &mut tracer,
+                cell_id,
+                notifications,
+                &injector_hint,
+            ),
+            Err(e) => unusable(&mut tracer, cell_id, notifications, e),
+        }
+    }
+}
+
+/// Record → transcribe → inject for one captured utterance.
+#[allow(clippy::too_many_arguments)]
+fn deliver(
+    transcriber: &mut Option<Transcriber>,
+    warm: &mut Option<mpsc::Receiver<Result<Transcriber>>>,
+    rec: &crate::capture::Recording,
+    tracer: &mut crate::trace::TraceLog,
+    cell_id: u64,
+    notifications: bool,
+    injector_hint: &str,
+) {
+    if transcriber.is_none() {
+        let rx = match warm {
+            Some(r) => r,
+            None => {
+                let msg = "STT unavailable: no warm receiver".to_string();
+                println!("  [stt] {msg}");
                 let _ = tracer.emit_fail(
                     crate::trace::Verb::Yield,
-                    crate::trace::E_NOT_READY,
+                    crate::trace::E_NOT_IMPLEMENTED,
                     cell_id,
                 );
-                notify(notifications, "VoxBox", "Nothing heard");
-                continue;
+                notify(notifications, "VoxBox", &msg);
+                return;
             }
         };
-        crate::tray::set_state(&tray, false);
-
-        if transcriber.is_none() {
-            match pre_rx.recv() {
-                Ok(Ok(t)) => transcriber = Some(t),
-                Ok(Err(e)) => {
-                    let msg = format!("STT unavailable: {e:#}");
-                    println!("  [stt] {msg}");
-                    let _ = tracer.emit_fail(
-                        crate::trace::Verb::Yield,
-                        crate::trace::E_NOT_IMPLEMENTED,
-                        cell_id,
-                    );
-                    notify(notifications, "VoxBox", &msg);
-                    continue;
-                }
-                Err(e) => {
-                    let msg = format!("STT warm-up thread died: {e}");
-                    println!("  [stt] {msg}");
-                    let _ = tracer.emit_fail(
-                        crate::trace::Verb::Yield,
-                        crate::trace::E_NOT_IMPLEMENTED,
-                        cell_id,
-                    );
-                    notify(notifications, "VoxBox", &msg);
-                    continue;
-                }
-            }
-        }
-        let text = match transcriber
-            .as_mut()
-            .expect("transcriber")
-            .transcribe(&rec.pcm, rec.sample_rate)
-        {
-            Ok(t) if !t.is_empty() => t,
-            Ok(_) => {
+        match rx.recv() {
+            Ok(Ok(t)) => *transcriber = Some(t),
+            Ok(Err(e)) => {
+                let msg = format!("STT unavailable: {e:#}");
+                println!("  [stt] {msg}");
                 let _ = tracer.emit_fail(
-                    crate::trace::Verb::Produce,
-                    crate::trace::E_FAULT,
+                    crate::trace::Verb::Yield,
+                    crate::trace::E_NOT_IMPLEMENTED,
                     cell_id,
                 );
-                notify(notifications, "VoxBox", "No words detected");
-                continue;
+                notify(notifications, "VoxBox", &msg);
+                return;
             }
             Err(e) => {
-                println!("  [stt] {e:#}");
+                let msg = format!("STT warm-up thread died: {e}");
+                println!("  [stt] {msg}");
                 let _ = tracer.emit_fail(
-                    crate::trace::Verb::Produce,
-                    crate::trace::E_UTF8,
+                    crate::trace::Verb::Yield,
+                    crate::trace::E_NOT_IMPLEMENTED,
                     cell_id,
                 );
-                notify(notifications, "VoxBox", &format!("Transcription failed: {e:#}"));
-                continue;
-            }
-        };
-
-        let injector = Injector::from_config(&injector_hint, &text);
-        match injector.inject_with_fallback(&text) {
-            Ok(()) => {
-                println!("  ▶ typed: {text}");
-                let _ = tracer.emit_ok(crate::trace::Verb::Yield, cell_id);
-                notify(notifications, "VoxBox", &text);
-            }
-            Err(e) => {
-                println!("  [inject] {e:#}");
-                let _ = tracer.emit_fail(crate::trace::Verb::Yield, crate::trace::E_PERMISSION, cell_id);
-                notify(notifications, "VoxBox", &format!("Could not type: {e:#}"));
+                notify(notifications, "VoxBox", &msg);
+                return;
             }
         }
     }
+    let text = match transcriber
+        .as_mut()
+        .expect("transcriber")
+        .transcribe(&rec.pcm, rec.sample_rate)
+    {
+        Ok(t) if !t.is_empty() => t,
+        Ok(_) => {
+            let _ = tracer.emit_fail(crate::trace::Verb::Produce, crate::trace::E_FAULT, cell_id);
+            notify(notifications, "VoxBox", "No words detected");
+            return;
+        }
+        Err(e) => {
+            println!("  [stt] {e:#}");
+            let _ = tracer.emit_fail(crate::trace::Verb::Produce, crate::trace::E_UTF8, cell_id);
+            notify(notifications, "VoxBox", &format!("Transcription failed: {e:#}"));
+            return;
+        }
+    };
+
+    let injector = Injector::from_config(injector_hint, &text);
+    match injector.inject_with_fallback(&text) {
+        Ok(()) => {
+            println!("  ▶ typed: {text}");
+            let _ = tracer.emit_ok(crate::trace::Verb::Yield, cell_id);
+            notify(notifications, "VoxBox", &text);
+        }
+        Err(e) => {
+            println!("  [inject] {e:#}");
+            let _ =
+                tracer.emit_fail(crate::trace::Verb::Yield, crate::trace::E_PERMISSION, cell_id);
+            notify(notifications, "VoxBox", &format!("Could not type: {e:#}"));
+        }
+    }
+}
+
+fn unusable(
+    tracer: &mut crate::trace::TraceLog,
+    cell_id: u64,
+    notifications: bool,
+    e: anyhow::Error,
+) {
+    println!("  [listen] {e:#}");
+    let _ = tracer.emit_fail(crate::trace::Verb::Yield, crate::trace::E_NOT_READY, cell_id);
+    notify(notifications, "VoxBox", "Nothing heard");
 }

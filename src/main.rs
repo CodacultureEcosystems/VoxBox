@@ -19,7 +19,9 @@ fn main() -> std::process::ExitCode {
     let mode = args.mode.unwrap_or(ModeArg::Shell);
     let result = match mode {
         ModeArg::Shell => voxbox::shell::run(config, args.text, args.no_tts),
-        ModeArg::Dictation | ModeArg::Resident => voxbox::dictate::run(config, args.no_tts),
+        ModeArg::Dictation | ModeArg::Resident => {
+            voxbox::dictate::run(config, args.config.as_deref())
+        }
     };
     match result {
         Ok(()) => std::process::ExitCode::SUCCESS,

@@ -150,3 +150,97 @@ fn config_merge_empty_is_default() {
     assert_eq!(cfg.dictation.key, "scrolllock");
     assert!(warnings.is_empty());
 }
+
+#[test]
+fn config_set_subkey_replaces_existing() {
+    let raw = "[tts]\nengine = \"piper\"\nvoice = \"old\"\n[ui]\nfeedback = \"full\"\n";
+    let out = crate::config::set_subkey(raw, "tts", "voice", "voice = \"new\"");
+    assert!(out.contains("voice = \"new\"",), "{out}");
+    assert!(!out.contains("old"), "{out}");
+    assert!(out.contains("engine = \"piper\""));
+    assert!(out.contains("feedback = \"full\""));
+}
+
+#[test]
+fn config_set_subkey_inserts_and_appends() {
+    let out = crate::config::set_subkey(
+        "[tts]\nvoice = \"x\"\n",
+        "tts",
+        "enabled",
+        "enabled = false",
+    );
+    assert!(out.contains("enabled = false"), "{out}");
+    let out = crate::config::set_subkey("[ui]\nfeedback = \"full\"\n", "tts", "voice", "voice = \"y\"");
+    assert!(out.contains("[tts]"), "{out}");
+    assert!(out.contains("voice = \"y\""));
+    assert!(crate::config::set_subkey("", "tts", "voice", "voice = \"z\"").contains("[tts]"));
+}
+
+#[test]
+fn voice_helpers_label_and_pick() {
+    use crate::studio::{installed_voices, voice_label, voice_pick};
+    assert_eq!(voice_label("en_US-lessac-medium"), "EN/US — lessac (medium)");
+    let dir = std::env::temp_dir().join("voxbox-voice-test");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("en_GB-alba-medium.onnx"), b"x").unwrap();
+    std::fs::write(dir.join("en_US-lessac-medium.onnx"), b"x").unwrap();
+    std::fs::write(dir.join("not-a-voice.txt"), b"x").unwrap();
+    let voices = installed_voices(&dir);
+    assert_eq!(voices, vec!["en_GB-alba-medium", "en_US-lessac-medium"]);
+    let (idx, summary) = voice_pick(&voices, &format!("{}/en_GB-alba-medium.onnx", dir.display()));
+    assert_eq!(idx, 1);
+    assert!(summary.contains("alba"));
+    assert_eq!(voice_pick(&voices, "").0, 0);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn list_agents_reads_and_skips_invalid() {
+    use crate::config::{list_agents_in, AgentConfig};
+    let dir = std::env::temp_dir().join("voxbox-agents-test");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("b-good.toml"),
+        "name = \"bartender\"\napi_base = \"http://localhost:8080/v1\"\nmodel = \"qwen\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("a-good.toml"),
+        "name = \"apothecary\"\napi_base = \"http://localhost:9000/v1\"\napi_key = \"k\"\nmodel = \"m\"\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join("broken.toml"), "name = \"\"").unwrap();
+    std::fs::write(dir.join("ignore.txt"), "name = \"x\"\napi_base = \"y\"").unwrap();
+    let agents: Vec<AgentConfig> = list_agents_in(&dir);
+    assert_eq!(agents.len(), 2);
+    assert_eq!(agents[0].name, "apothecary", "agents are sorted by name");
+    assert_eq!(agents[1].model, "qwen");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn missing_agents_dir_is_empty_not_error() {
+    use crate::config::list_agents_in;
+    let agents = list_agents_in(std::path::Path::new("/nonexistent/voxbox-agents"));
+    assert!(agents.is_empty());
+}
+
+#[test]
+fn tile_pointer_is_testable_purely() {
+    use crate::studio::{TileEvent, TilePointer, DOUBLE_MS, HOLD_MS};
+    assert!(DOUBLE_MS < HOLD_MS);
+    let mut p = TilePointer::new();
+    let t0 = std::time::Instant::now();
+    assert_eq!(p.step(true, false, t0, false), None);
+    assert_eq!(
+        p.step(
+            false,
+            true,
+            t0 + std::time::Duration::from_millis(60),
+            false
+        ),
+        None
+    );
+    assert_eq!(TileEvent::Toggle, TileEvent::Toggle);
+}

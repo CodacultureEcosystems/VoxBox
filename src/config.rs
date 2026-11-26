@@ -3,6 +3,7 @@ use serde::Deserialize;
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct SttConfig {
+    pub engine: String,
     pub model: String,
     pub language: String,
 }
@@ -10,6 +11,7 @@ pub struct SttConfig {
 impl Default for SttConfig {
     fn default() -> Self {
         Self {
+            engine: "whisper".into(),
             model: "base".into(),
             language: "en".into(),
         }
@@ -278,4 +280,176 @@ fn section_blocks(raw: &str) -> Vec<(String, Vec<String>)> {
         }
     }
     blocks
+}
+
+/// The user's config file path (same one `load` reads).
+pub fn config_path() -> std::path::PathBuf {
+    dirs::config_dir()
+        .map(|d| d.join("voxbox/config.toml"))
+        .unwrap_or_else(|| std::path::PathBuf::from("config.toml"))
+}
+
+/// One local AI agent declaration from `~/.config/voxbox/agents/*.toml`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct AgentConfig {
+    pub name: String,
+    pub api_base: String,
+    #[serde(default)]
+    pub api_key: String,
+    #[serde(default)]
+    pub model: String,
+}
+
+/// Where agent files live: one `.toml` per agent.
+pub fn agents_dir() -> std::path::PathBuf {
+    dirs::config_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("voxbox/agents")
+}
+
+/// Load agents from a directory; invalid files are skipped.
+pub fn list_agents_in(dir: &std::path::Path) -> Vec<AgentConfig> {
+    let mut agents: Vec<AgentConfig> = std::fs::read_dir(dir)
+        .map(|rd| {
+            rd.filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .filter(|p| p.extension().map(|x| x == "toml").unwrap_or(false))
+                .filter_map(|p| {
+                    let raw = std::fs::read_to_string(&p).ok()?;
+                    let agent: AgentConfig = toml::from_str(&raw).ok()?;
+                    if agent.name.is_empty() || agent.api_base.is_empty() {
+                        return None;
+                    }
+                    Some(agent)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    agents.sort_by(|a, b| a.name.cmp(&b.name));
+    agents
+}
+
+/// Load the agents the resident can route `[brain]` requests to.
+pub fn list_agents() -> Vec<AgentConfig> {
+    list_agents_in(&agents_dir())
+}
+
+/// Activate an agent: copy its settings into the `[brain]` section of the
+/// user's config file, in place.
+pub fn activate_agent(agent: &AgentConfig) -> Result<(), String> {
+    let p = config_path();
+    let raw = std::fs::read_to_string(&p).unwrap_or_default();
+    let mut text = raw;
+    text = set_subkey(&text, "brain", "api_base", &format!("api_base = \"{}\"", agent.api_base));
+    text = set_subkey(&text, "brain", "model", &format!("model = \"{}\"", agent.model));
+    if !agent.api_key.is_empty() {
+        text = set_subkey(&text, "brain", "api_key", &format!("api_key = \"{}\"", agent.api_key));
+    }
+    if let Some(parent) = p.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(&p, text).map_err(|e| e.to_string())
+}
+
+/// Set `[stt]` settings (engine, model reference) in the user's config
+/// file, in place.
+pub fn save_stt(engine: Option<&str>, model: Option<&str>) -> Result<(), String> {
+    let p = config_path();
+    let raw = std::fs::read_to_string(&p).unwrap_or_default();
+    let mut text = raw;
+    if let Some(e) = engine {
+        text = set_subkey(&text, "stt", "engine", &format!("engine = \"{e}\""));
+    }
+    if let Some(m) = model {
+        text = set_subkey(&text, "stt", "model", &format!("model = \"{m}\""));
+    }
+    if let Some(parent) = p.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(&p, text).map_err(|e| e.to_string())
+}
+
+/// Read just the `[tts]` section as `(engine, voice, enabled)`, honoring the
+/// same recovery rules as `merge` (never panics, never prints).
+pub fn read_tts() -> (String, String, bool) {
+    let raw = std::fs::read_to_string(config_path()).unwrap_or_default();
+    let (c, _) = Config::merge(&raw);
+    (c.tts.engine, c.tts.voice, c.tts.enabled)
+}
+
+/// Set `[tts]` settings by rewriting the user's config file in place;
+/// untouched lines (including broken ones elsewhere) are preserved.
+pub fn save_tts(
+    engine: Option<&str>,
+    voice: Option<&str>,
+    enabled: Option<bool>,
+) -> Result<(), String> {
+    let p = config_path();
+    let raw = std::fs::read_to_string(&p).unwrap_or_default();
+    let mut text = raw;
+    if let Some(e) = engine {
+        text = set_subkey(&text, "tts", "engine", &format!("engine = \"{e}\""));
+    }
+    if let Some(v) = voice {
+        text = set_subkey(&text, "tts", "voice", &format!("voice = \"{v}\""));
+    }
+    if let Some(b) = enabled {
+        text = set_subkey(&text, "tts", "enabled", &format!("enabled = {b}"));
+    }
+    if let Some(parent) = p.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(&p, text).map_err(|e| e.to_string())
+}
+
+/// Rewrite/insert `value_line` for `key` inside `[section]` of raw TOML text,
+/// keeping every other line byte-identical. Missing section is appended.
+pub fn set_subkey(raw: &str, section: &str, key: &str, value_line: &str) -> String {
+    fn is_header(t: &str) -> bool {
+        t.starts_with('[') && t.ends_with(']') && !t.starts_with("[[")
+    }
+    fn header_name(t: &str) -> &str {
+        t[1..t.len() - 1].trim()
+    }
+    fn is_our_key(t: &str, key: &str) -> bool {
+        t.starts_with(key) && t[key.len()..].trim_start().starts_with('=')
+    }
+
+    let mut out: Vec<String> = Vec::new();
+    let mut in_section = false;
+    let mut header_idx: Option<usize> = None;
+    let mut replaced = false;
+    for line in raw.lines() {
+        let t = line.trim();
+        if is_header(t) {
+            in_section = header_name(t) == section;
+            if in_section && header_idx.is_none() {
+                header_idx = Some(out.len());
+            }
+        }
+        if in_section && !is_header(t) && is_our_key(t, key) {
+            if !replaced {
+                out.push(value_line.to_string());
+                replaced = true;
+            }
+            continue;
+        }
+        out.push(line.to_string());
+    }
+    match (header_idx, replaced) {
+        (Some(idx), false) => out.insert(idx + 1, value_line.to_string()),
+        (None, false) => {
+            if out.last().map(|l| !l.trim().is_empty()).unwrap_or(false) {
+                out.push(String::new());
+            }
+            out.push(format!("[{section}]"));
+            out.push(value_line.to_string());
+        }
+        _ => {}
+    }
+    let mut joined = out.join("\n");
+    if !joined.ends_with('\n') {
+        joined.push('\n');
+    }
+    joined
 }

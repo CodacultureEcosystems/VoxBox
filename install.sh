@@ -12,6 +12,14 @@ VOICE_NAME="en_US-lessac-medium"
 INSTALL_BIN="${VOXBOX_BIN_DIR:-$HOME/.local/bin}"
 DATA_DIR="$HOME/.local/share/voxbox"
 CONFIG_DIR="$HOME/.config/voxbox"
+CACHE_DIR="$HOME/.cache/voxbox"
+WITH_PARAKEET=0
+for arg in "$@"; do
+    case "$arg" in
+        --with-parakeet) WITH_PARAKEET=1 ;;
+        *) echo "unknown option: $arg (supported: --with-parakeet)" >&2; exit 1 ;;
+    esac
+done
 
 say() { printf '\n  \033[1;36m==>\033[0m %s\n' "$*"; }
 fetch() {
@@ -49,9 +57,21 @@ if ! command -v cargo >/dev/null 2>&1; then
     export PATH="$HOME/.cargo/bin:$PATH"
 fi
 
-# ── 2. build (Rust only: whisper.cpp compiles into the binaries) ──────────
+# ── 2. build (Rust only: whisper.cpp + the Parakeet engine compile in) ────
 say "Building voxbox + vbd (release)"
 (cd "$REPO_DIR" && cargo build --release)
+
+# ── 2b. Parakeet model (optional now; also auto-downloads on first use) ───
+PARAKEET_DIR="$CACHE_DIR/parakeet-tdt-0.6b-v3"
+if [ "$WITH_PARAKEET" = "1" ]; then
+    say "Downloading Parakeet (parakeet-tdt-0.6b-v3, ~2.5 GB)"
+    mkdir -p "$PARAKEET_DIR"
+    for f in encoder-model.onnx encoder-model.onnx.data decoder_joint-model.onnx vocab.txt; do
+        [ -f "$PARAKEET_DIR/$f" ] || fetch \
+            "https://huggingface.co/altunenes/parakeet-rs/resolve/main/parakeet-tdt-0.6b-v3/$f" \
+            "$PARAKEET_DIR/$f"
+    done
+fi
 
 # ── 3. install binaries ───────────────────────────────────────────────────
 say "Installing binaries to $INSTALL_BIN"
@@ -133,6 +153,21 @@ if [ -f "$CONFIG_DIR/config.toml" ] && ! grep -q '^\[dictation\]' "$CONFIG_DIR/c
         >> "$CONFIG_DIR/config.toml"
 fi
 
+if [ -f "$CONFIG_DIR/config.toml" ] && ! grep -q '^\[stt\]' "$CONFIG_DIR/config.toml"; then
+    printf '\n[stt]\nengine = "whisper"\nmodel = "%s"\nlanguage = "en"\n' "$MODEL" \
+        >> "$CONFIG_DIR/config.toml"
+fi
+
+mkdir -p "$CONFIG_DIR/agents"
+if [ ! -f "$CONFIG_DIR/agents/example-local.toml" ]; then
+    cat > "$CONFIG_DIR/agents/example-local.toml" <<'AGENT'
+name = "example"
+api_base = "http://localhost:8080/v1"
+api_key = ""
+model = "local-model"
+AGENT
+fi
+
 # ── 7. desktop menu entry + icon + (optional) autostart ───────────────────
 say "Installing menu entry and icon"
 APPS_DIR="$HOME/.local/share/applications"
@@ -144,7 +179,8 @@ if [ -f "$REPO_DIR/assets/voxbox.png" ]; then
     install -m 0644 "$REPO_DIR/assets/voxbox.png" \
         "$HOME/.local/share/icons/hicolor/512x512/apps/voxbox.png"
 fi
-sed -e "s|^Exec=voxbox dictation|Exec=$INSTALL_BIN/voxbox dictation|" \
+sed -e "s|^Exec=vbd --window|Exec=$INSTALL_BIN/vbd --window|" \
+    -e "s|^Exec=voxbox dictation|Exec=$INSTALL_BIN/voxbox dictation|" \
     -e "s|^Exec=vbd$|Exec=$INSTALL_BIN/vbd|" \
     -e "s|^Exec=voxbox$|Exec=$INSTALL_BIN/voxbox|" \
     -e "s|^Exec=voxbox --text|Exec=$INSTALL_BIN/voxbox --text|" \
@@ -180,8 +216,14 @@ CONFIGURED_KEY="$(sed -n 's/^key *= *"\(.*\)"$/\1/p' "$CONFIG_DIR/config.toml" 2
 cat <<EOF
 
   VoxBox installed.
-    Desktop menu:   "VoxBox"  (right-click: dictation resident / voice shell / text)
+    Studio window:  left-click the tray Being, or menu → "VoxBox" (vbd --window)
     Tray icon:      appears when the dictation resident runs (state + Record now + quit)
+    Desktop tile:   Studio → "Show the desktop tile" — single click: one utterance,
+                    double click: constant mode, hold + release: push-to-talk
+    Engines:        Studio → Speech engine — whisper | parakeet
+                    (${WITH_PARAKEET:+parakeet model downloaded}${WITH_PARAKEET:-parakeet model (~2.5 GB) downloads on first use,
+                    or pre-fetch now with: bash install.sh --with-parakeet})
+    Agents:         $CONFIG_DIR/agents/*.toml — pick them in Studio → AI agents
     Voice shell:    $INSTALL_BIN/voxbox
     AutoStart:      mkdir -p ~/.config/autostart &&
                     cp $APPS_DIR/voxbox.desktop ~/.config/autostart/

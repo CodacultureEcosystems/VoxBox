@@ -59,8 +59,11 @@ impl VoxBox {
     fn transcribe(&mut self, rec: &Recording) -> Result<String> {
         if self.transcriber.is_none() {
             let stt = &self.config.stt;
-            self.transcriber =
-                Some(Transcriber::new(&stt.model, &stt.language)?);
+            self.transcriber = Some(Transcriber::with_engine(
+                crate::stt::engine_from(&stt.engine),
+                &stt.model,
+                &stt.language,
+            )?);
         }
         self.transcriber
             .as_mut()

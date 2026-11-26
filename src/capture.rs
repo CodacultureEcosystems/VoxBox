@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use std::io::Read;
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::vad::EnergyVad;
 
@@ -42,6 +43,19 @@ impl Recorder {
     /// Record one utterance via `arecord` piped into a local Rust VAD.
     /// Returns once trailing silence is detected (or the hard cap is hit).
     pub fn record(&self) -> Result<Recording> {
+        self.record_with(None, false)
+    }
+
+    /// Record with external control:
+    /// - `stop`: when set to true, the recording ends immediately
+    ///   (push-to-talk release, constant-mode shutdown).
+    /// - `force_speech`: keep every frame between start and stop instead of
+    ///   trimming to VAD speech (hold-to-talk must not drop quiet words).
+    pub fn record_with(
+        &self,
+        stop: Option<&AtomicBool>,
+        force_speech: bool,
+    ) -> Result<Recording> {
         if !have_arecord() {
             return Err(anyhow!(
                 "arecord not found; install alsa-utils or run with --text"
@@ -69,6 +83,11 @@ impl Recorder {
 
         let mut keep_last: Vec<Vec<u8>> = Vec::new();
         loop {
+            if let Some(flag) = stop {
+                if flag.load(Ordering::Relaxed) {
+                    break;
+                }
+            }
             let n = read_exact_or_eof(&mut stdout, &mut buf)?;
             if n == 0 {
                 break;
@@ -80,12 +99,12 @@ impl Recorder {
                 .chunks_exact(2)
                 .map(|c| i16::from_le_bytes([c[0], c[1]]))
                 .collect();
-            let speech = vad.is_speech(&frame);
+            let speech = force_speech || vad.is_speech(&frame);
             if speech {
                 quiet_frames = 0;
                 spoken = true;
                 pcm.extend_from_slice(&buf[..n]);
-            } else if spoken {
+            } else if spoken && !force_speech {
                 quiet_frames += 1;
                 pcm.extend_from_slice(&buf[..n]);
                 if quiet_frames >= quiet_limit {

@@ -1,6 +1,6 @@
 //! The vbd tray Being: resident status icon (StatusNotifierItem over D-Bus).
-//! Shows idle/recording state and offers the mouse menu: Record now,
-//! Voice shell, Voice shell (text mode), quit.
+//! Left-click opens the VoxBox Studio window; the menu offers Record
+//! now, opening the window, and quit.
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
@@ -8,6 +8,8 @@ use std::sync::Arc;
 use ksni::blocking::{Handle, TrayMethods};
 use ksni::menu::{MenuItem, StandardItem};
 use ksni::{Category, Icon, Status, ToolTip, Tray};
+
+use crate::dictate::{Controls, Signal};
 
 const IDLE: u8 = 0;
 const RECORDING: u8 = 1;
@@ -63,7 +65,36 @@ pub struct VoxTray {
     state: AtomicU8,
     quit: Arc<AtomicBool>,
     key: String,
-    trigger: mpsc::Sender<()>,
+    trigger: mpsc::Sender<Signal>,
+    controls: Arc<Controls>,
+    window_open: Arc<AtomicBool>,
+    tile_open: Arc<AtomicBool>,
+}
+
+/// Open the Studio window (idempotent: one window at a time).
+pub fn open_window(
+    open_flag: Arc<AtomicBool>,
+    trigger: Option<mpsc::Sender<Signal>>,
+    controls: Option<Arc<Controls>>,
+    tile_open: Arc<AtomicBool>,
+    key: String,
+) {
+    if open_flag
+        .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
+        .is_err()
+    {
+        return;
+    }
+    let ctx = crate::studio::StudioCtx {
+        trigger,
+        controls,
+        open_flag,
+        tile_open,
+        key,
+    };
+    let _ = std::thread::Builder::new()
+        .name("voxbox-studio".into())
+        .spawn(move || crate::studio::launch(ctx));
 }
 
 fn item(
@@ -109,6 +140,16 @@ impl Tray for VoxTray {
         state_status(self.state.load(Ordering::Relaxed))
     }
 
+    fn activate(&mut self, _x: i32, _y: i32) {
+        crate::tray::open_window(
+            Arc::clone(&self.window_open),
+            Some(self.trigger.clone()),
+            Some(Arc::clone(&self.controls)),
+            Arc::clone(&self.tile_open),
+            self.key.clone(),
+        );
+    }
+
     fn icon_name(&self) -> String {
         "voxbox".into()
     }
@@ -140,10 +181,23 @@ impl Tray for VoxTray {
 
     fn menu(&self) -> Vec<MenuItem<VoxTray>> {
         let trigger = self.trigger.clone();
+        let constant_trigger = self.trigger.clone();
+        let constant_on = self.controls.constant();
         vec![
             MenuItem::Standard(item(record_label(&self.key), true, move |_| {
-                let _ = trigger.send(());
+                let _ = trigger.send(Signal::Toggle);
             })),
+            MenuItem::Standard(item(
+                format!(
+                    "{} Constant mode  (double-click the desktop tile)",
+                    if constant_on { "☒ Stop" } else { "☐ Start" }
+                ),
+                true,
+                move |tray| {
+                    let next = !tray.controls.constant();
+                    let _ = constant_trigger.send(Signal::Constant(next));
+                },
+            )),
             MenuItem::Standard(item(
                 format!(
                     "Hotkey: {} (config.toml [dictation])",
@@ -154,14 +208,15 @@ impl Tray for VoxTray {
             )),
             MenuItem::Separator,
             MenuItem::Standard(item(
-                "Conversation — talk, VoxBox replies out loud".into(),
+                "Open VoxBox Studio".into(),
                 true,
-                |_| spawn_shell(&[]),
-            )),
-            MenuItem::Standard(item(
-                "Conversation (text mode — type instead of speak)".into(),
-                true,
-                |_| spawn_shell(&["--text"]),
+                |tray| open_window(
+                    tray.window_open.clone(),
+                    Some(tray.trigger.clone()),
+                    Some(Arc::clone(&tray.controls)),
+                    Arc::clone(&tray.tile_open),
+                    tray.key.clone(),
+                ),
             )),
             MenuItem::Separator,
             MenuItem::Standard(item("Quit".into(), true, move |tray| {
@@ -171,7 +226,7 @@ impl Tray for VoxTray {
     }
 }
 
-fn spawn_shell(args: &[&str]) {
+pub fn spawn_shell(args: &[&str]) {
     let home = std::env::var("HOME").unwrap_or_default();
     let bin = format!("{home}/.local/bin/voxbox");
     let path = if std::path::Path::new(&bin).exists() {
@@ -190,14 +245,18 @@ fn spawn_shell(args: &[&str]) {
 /// (headless shells keep working without it).
 pub fn spawn(
     key: &str,
-    trigger: mpsc::Sender<()>,
+    trigger: mpsc::Sender<Signal>,
     quit: Arc<AtomicBool>,
+    controls: Arc<Controls>,
 ) -> Option<Handle<VoxTray>> {
     let tray = VoxTray {
         state: AtomicU8::new(IDLE),
+        window_open: Arc::new(AtomicBool::new(false)),
+        tile_open: Arc::new(AtomicBool::new(false)),
         quit,
         key: key.to_string(),
         trigger,
+        controls,
     };
     match tray.spawn() {
         Ok(handle) => Some(handle),
@@ -210,6 +269,7 @@ pub fn spawn(
 
 /// Push the recording state to the tray (no-op without a tray host).
 pub fn set_state(tray: &Option<Handle<VoxTray>>, recording: bool) {
+    crate::studio::set_state(recording);
     let s = if recording { RECORDING } else { IDLE };
     if let Some(h) = tray {
         let _ = h.update(|t| t.state.store(s, Ordering::Relaxed));

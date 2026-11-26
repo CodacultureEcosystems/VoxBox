@@ -2,7 +2,11 @@
 # Copy to ~/.config/voxbox/config.toml and edit.
 
 [stt]
-# tiny | tiny.en | base | small | medium | large-v3 (auto-downloaded from HuggingFace)
+# whisper | parakeet  (switch in the Studio window too)
+engine = "whisper"
+# whisper: tiny|tiny.en|base|small|medium|large-v3, or a local path to ggml-*.bin
+# parakeet: empty = bundled parakeet-tdt-0.6b-v3 (~2.5 GB, first-use download),
+#           or a local directory with the ONNX export (encoder-model.onnx + vocab.txt)
 model = "base"
 language = "en"        # "en", or "" for auto-detect
 
