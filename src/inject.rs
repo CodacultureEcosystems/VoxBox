@@ -90,12 +90,14 @@ impl Injector {
         match self.inject(text) {
             Ok(()) => Ok(()),
             Err(first) => {
+                let mut failures = vec![format!("{}: {:#}", self.as_str(), first)];
                 for alt in self.fallbacks(text) {
-                    if alt.inject(text).is_ok() {
-                        return Ok(());
+                    match alt.inject(text) {
+                        Ok(()) => return Ok(()),
+                        Err(e) => failures.push(format!("{}: {:#}", alt.as_str(), e)),
                     }
                 }
-                Err(first)
+                Err(anyhow!("all injectors failed — {}", failures.join("; ")))
             }
         }
     }
@@ -148,14 +150,20 @@ fn fallback_order(
 }
 
 fn run_injector(program: &str, args: Vec<String>) -> Result<()> {
-    let status = std::process::Command::new(program)
+    let out = std::process::Command::new(program)
         .args(&args)
-        .status()
+        .output()
         .map_err(|e| anyhow!("{program}: {e}"))?;
-    if status.success() {
+    if out.status.success() {
         Ok(())
     } else {
-        Err(anyhow!("{program} exited with an error"))
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let stderr = stderr.trim();
+        if stderr.is_empty() {
+            Err(anyhow!("{program} exited with an error"))
+        } else {
+            Err(anyhow!("{program}: {stderr}"))
+        }
     }
 }
 
@@ -222,17 +230,26 @@ impl UinputKeyboard {
                 || libc::ioctl(fd, UI_SET_EVBIT as libc::c_ulong, EV_SYN as libc::c_int) < 0
             {
                 close_fd(fd);
-                return Err(anyhow!("UI_SET_EVBIT failed"));
+                return Err(anyhow!(
+                    "UI_SET_EVBIT failed: {}",
+                    std::io::Error::last_os_error()
+                ));
             }
             for &code in codes.iter() {
                 if libc::ioctl(fd, UI_SET_KEYBIT as libc::c_ulong, code as libc::c_int) < 0 {
                     close_fd(fd);
-                    return Err(anyhow!("UI_SET_KEYBIT failed for code {code}"));
+                    return Err(anyhow!(
+                        "UI_SET_KEYBIT failed for code {code}: {}",
+                        std::io::Error::last_os_error()
+                    ));
                 }
             }
             if libc::ioctl(fd, UI_DEV_CREATE as libc::c_ulong) < 0 {
                 close_fd(fd);
-                return Err(anyhow!("UI_DEV_CREATE failed"));
+                return Err(anyhow!(
+                    "UI_DEV_CREATE failed: {}",
+                    std::io::Error::last_os_error()
+                ));
             }
         }
         Ok(UinputKeyboard { fd })
