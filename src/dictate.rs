@@ -60,6 +60,31 @@ impl WarmSpec {
     }
 }
 
+/// Single-instance guard: hold an exclusive lock on a lockfile for the
+/// lifetime of the resident so double-launches (desktop icon, autostart,
+/// Studio) are no-ops instead of fighting over the hotkey and tray.
+fn acquire_resident_lock() -> Result<()> {
+    use std::os::unix::io::AsRawFd;
+    let path = crate::stt::model_cache_dir().join("vbd.lock");
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(&path)
+        .map_err(|e| anyhow!("lockfile {}: {e}", path.display()))?;
+    let rc = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+    if rc != 0 {
+        return Err(anyhow!("lockfile held by another vbd"));
+    }
+    // Intentionally leak the file handle — the lock must outlive this call;
+    // the OS drops it when the process exits either way.
+    std::mem::forget(file);
+    Ok(())
+}
+
 /// Map a hotkey name to its evdev key code.
 pub fn hotkey_code(name: &str) -> Option<u16> {
     Some(match name.trim().to_lowercase().as_str() {
@@ -214,15 +239,35 @@ pub fn run(config: Config, config_path: Option<&str>) -> Result<()> {
     };
     let mut transcriber: Option<Transcriber> = None;
 
+    if let Err(e) = acquire_resident_lock() {
+        println!("  vbd resident: already awake ({e:#}) — nothing to do");
+        return Ok(());
+    }
+
     let (tx, rx) = mpsc::channel::<Signal>();
     let quit = Arc::new(AtomicBool::new(false));
     let controls = Controls::new();
+    let tile_open = Arc::new(AtomicBool::new(false));
     let tray = crate::tray::spawn(
         &key_name,
         tx.clone(),
         Arc::clone(&quit),
         Arc::clone(&controls),
+        Arc::clone(&tile_open),
     );
+
+    // The desktop tile rides with the resident — visible immediately,
+    // no Studio digging required.
+    {
+        let tile_ctx = crate::studio::TileCtx {
+            trigger: Some(tx.clone()),
+            controls: Some(Arc::clone(&controls)),
+            open_flag: Arc::clone(&tile_open),
+        };
+        let _ = std::thread::Builder::new()
+            .name("voxbox-tile-spawn".into())
+            .spawn(move || crate::studio::launch_tile(tile_ctx));
+    }
 
     let (pre_tx, pre_rx) = mpsc::channel::<Result<Transcriber>>();
     spawn_warmup(WarmSpec::from_config(&config), pre_tx);

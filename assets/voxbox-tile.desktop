@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=VoxBox Talk
+GenericName=Voice tile — click to talk
+Comment=Single click: one utterance · double click: constant mode · hold: push-to-talk
+Exec=sh -c 'pgrep -x vbd >/dev/null 2>&1 || (setsid "$HOME/.local/bin/vbd" >/dev/null 2>&1 &)'
+Icon=voxbox
+Terminal=false
+Categories=AudioVideo;Audio;
+Keywords=voice;dictation;speech;tile;voxbox;
+NoDisplay=false

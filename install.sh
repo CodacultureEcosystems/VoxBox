@@ -190,6 +190,16 @@ command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$
 command -v gtk-update-icon-cache >/dev/null 2>&1 && \
     gtk-update-icon-cache -f -t "$HOME/.local/share/icons/hicolor" || true
 
+# the desktop tile: an icon ON the desktop — click launches (or wakes) the
+# resident, which opens the always-on-top toggle tile
+if [ -d "$HOME/Desktop" ]; then
+    say "Installing the VoxBox Talk tile on your desktop"
+    install -m 0755 "$REPO_DIR/assets/voxbox-tile.desktop" "$HOME/Desktop/voxbox-tile.desktop"
+    command -v gio >/dev/null 2>&1 && \
+        gio set "$HOME/Desktop/voxbox-tile.desktop" metadata::trusted true 2>/dev/null || true
+fi
+install -m 0644 "$REPO_DIR/assets/voxbox-tile.desktop" "$APPS_DIR/voxbox-tile.desktop"
+
 # ── 8. permissions needed for global hotkey + text injection ──────────────
 say "Permission setup (uinput rule + group memberships)"
 if command -v sudo >/dev/null 2>&1; then
@@ -216,16 +226,20 @@ CONFIGURED_KEY="$(sed -n 's/^key *= *"\(.*\)"$/\1/p' "$CONFIG_DIR/config.toml" 2
 cat <<EOF
 
   VoxBox installed.
+    Desktop tile:   the "VoxBox Talk" icon on your desktop (if you have one) —
+                    double-click it once to allow launching, then single click
+                    wakes the resident and the tile appears bottom-right:
+                    single click: one utterance · double click: constant mode ·
+                    hold + release: push-to-talk
     Studio window:  left-click the tray Being, or menu → "VoxBox" (vbd --window)
     Tray icon:      appears when the dictation resident runs (state + Record now + quit)
-    Desktop tile:   Studio → "Show the desktop tile" — single click: one utterance,
-                    double click: constant mode, hold + release: push-to-talk
     Engines:        Studio → Speech engine — whisper | parakeet
                     (${WITH_PARAKEET:+parakeet model downloaded}${WITH_PARAKEET:-parakeet model (~2.5 GB) downloads on first use,
                     or pre-fetch now with: bash install.sh --with-parakeet})
     Agents:         $CONFIG_DIR/agents/*.toml — pick them in Studio → AI agents
     Voice shell:    $INSTALL_BIN/voxbox
     AutoStart:      mkdir -p ~/.config/autostart &&
-                    cp $APPS_DIR/voxbox.desktop ~/.config/autostart/
-    Hotkey:         ${CONFIGURED_KEY:-scrolllock}  (change in $CONFIG_DIR/config.toml → [dictation] key)
+                    cp $APPS_DIR/voxbox.desktop ~/.config/autostart/ &&
+                    cp $APPS_DIR/voxbox-tile.desktop ~/.config/autostart/
+    Hotkey:         ${CONFIGURED_KEY:-scrolllock}  (still available in $CONFIG_DIR/config.toml → [dictation] key)
 EOF

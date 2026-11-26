@@ -44,9 +44,13 @@ hotkey ──► vbd (Bsew@vbd): record ──► whisper-rs ──► uinput/wt
   --window`) for a real window — status banner, one-click record, conversation
   launchers, Piper voice picker with a live test line, **speech-engine
   selector, local-model loader, AI-agent picker, and the desktop tile**.
-- **Desktop tile:** a small always-on-top VoxBox icon. **Single click** records
-  one utterance, **double click** toggles constant mode (continuous dictated
-  conversation), **hold and release** is push-to-talk.
+- **Desktop tile (default on, no hotkey needed):** when the resident starts it
+  opens a small always-on-top VoxBox icon bottom-right, and the installer puts
+  a **"VoxBox Talk" icon on your desktop** (clicking it wakes the resident if
+  it is not running). Gestures: **single click** records one utterance,
+  **double click** toggles constant mode (continuous dictated conversation),
+  **hold and release** is push-to-talk. The keyboard hotkey still works for
+  those who want it, but nothing requires it.
 - **Tray Being:** while the dictation resident runs, a status icon (SNI over
   D-Bus) shows idle/recording state and offers *Record now*, a constant-mode
   toggle, *Open VoxBox Studio*, *Quit*.

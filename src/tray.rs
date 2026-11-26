@@ -248,11 +248,12 @@ pub fn spawn(
     trigger: mpsc::Sender<Signal>,
     quit: Arc<AtomicBool>,
     controls: Arc<Controls>,
+    tile_open: Arc<AtomicBool>,
 ) -> Option<Handle<VoxTray>> {
     let tray = VoxTray {
         state: AtomicU8::new(IDLE),
         window_open: Arc::new(AtomicBool::new(false)),
-        tile_open: Arc::new(AtomicBool::new(false)),
+        tile_open,
         quit,
         key: key.to_string(),
         trigger,
