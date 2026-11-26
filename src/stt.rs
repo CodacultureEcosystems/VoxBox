@@ -63,6 +63,25 @@ impl Transcriber {
     }
 
     #[cfg(feature = "whisper")]
+    /// Load the whisper model eagerly so the first record is instant.
+    pub fn preload(&mut self) -> Result<()> {
+        if self.ctx.is_none() {
+            let ctx = WhisperContext::new_with_params(
+                self.model_path.to_string_lossy().as_ref(),
+                WhisperContextParameters::default(),
+            )
+            .context("failed to load whisper model")?;
+            self.ctx = Some(ctx);
+        }
+        Ok(())
+    }
+
+    #[cfg(not(feature = "whisper"))]
+    pub fn preload(&mut self) -> Result<()> {
+        Ok(())
+    }
+
+    #[cfg(feature = "whisper")]
     pub fn transcribe(&mut self, pcm16: &[u8], sample_rate: u32) -> Result<String> {
         anyhow::ensure!(sample_rate == 16000, "whisper expects 16 kHz audio");
         let samples: Vec<f32> = pcm16

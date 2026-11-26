@@ -164,8 +164,11 @@ fi
 $SUDO groupadd -f uinput 2>/dev/null || true
 printf 'KERNEL=="uinput", GROUP="uinput", MODE="0660"\n' \
     | $SUDO tee /etc/udev/rules.d/60-voxbox-uinput.rules >/dev/null || true
+printf 'SUBSYSTEM=="input", KERNEL=="event*", TAG+="uaccess"\n' \
+    | $SUDO tee /etc/udev/rules.d/60-voxbox-input.rules >/dev/null || true
 $SUDO udevadm control --reload 2>/dev/null || true
 $SUDO udevadm trigger /dev/uinput 2>/dev/null || true
+$SUDO udevadm trigger --subsystem-match=input 2>/dev/null || true
 echo "  Add your user to both groups (activation needs a fresh login):"
 echo "    sudo usermod -aG input,uinput \$USER"
 echo "  Log out and back in afterwards."

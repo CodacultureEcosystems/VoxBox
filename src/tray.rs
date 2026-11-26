@@ -154,12 +154,12 @@ impl Tray for VoxTray {
             )),
             MenuItem::Separator,
             MenuItem::Standard(item(
-                "Voice shell — speak commands, spoken replies".into(),
+                "Conversation — talk, VoxBox replies out loud".into(),
                 true,
                 |_| spawn_shell(&[]),
             )),
             MenuItem::Standard(item(
-                "Voice shell (text mode — no microphone)".into(),
+                "Conversation (text mode — type instead of speak)".into(),
                 true,
                 |_| spawn_shell(&["--text"]),
             )),

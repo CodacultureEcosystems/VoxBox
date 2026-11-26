@@ -149,6 +149,21 @@ pub fn run(config: Config, _no_tts: bool) -> Result<()> {
     let quit = Arc::new(AtomicBool::new(false));
     let tray = crate::tray::spawn(&key_name, tx.clone(), Arc::clone(&quit));
 
+    let (pre_tx, pre_rx) = mpsc::channel::<Result<Transcriber>>();
+    {
+        let model = stt_cfg.model.clone();
+        let language = stt_cfg.language.clone();
+        println!("  [stt] warming whisper ({}) in the background…", if model.is_empty() { "base" } else { &model });
+        let _ = std::thread::Builder::new()
+            .name("voxbox-stt-warm".into())
+            .spawn(move || {
+                let _ = pre_tx.send(Transcriber::new(&model, &language).and_then(|mut t| {
+                    t.preload()?;
+                    Ok(t)
+                }));
+            });
+    }
+
     let started = spawn_monitors(code, tx.clone())?;
     let mut monitors_active = started > 0;
     if !monitors_active {
@@ -226,10 +241,21 @@ pub fn run(config: Config, _no_tts: bool) -> Result<()> {
         crate::tray::set_state(&tray, false);
 
         if transcriber.is_none() {
-            match Transcriber::new(&stt_cfg.model, &stt_cfg.language) {
-                Ok(t) => transcriber = Some(t),
-                Err(e) => {
+            match pre_rx.recv() {
+                Ok(Ok(t)) => transcriber = Some(t),
+                Ok(Err(e)) => {
                     let msg = format!("STT unavailable: {e:#}");
+                    println!("  [stt] {msg}");
+                    let _ = tracer.emit_fail(
+                        crate::trace::Verb::Yield,
+                        crate::trace::E_NOT_IMPLEMENTED,
+                        cell_id,
+                    );
+                    notify(notifications, "VoxBox", &msg);
+                    continue;
+                }
+                Err(e) => {
+                    let msg = format!("STT warm-up thread died: {e}");
                     println!("  [stt] {msg}");
                     let _ = tracer.emit_fail(
                         crate::trace::Verb::Yield,
