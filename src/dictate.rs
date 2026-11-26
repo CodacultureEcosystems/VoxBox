@@ -267,6 +267,10 @@ pub fn run(config: Config, config_path: Option<&str>) -> Result<()> {
         let _ = std::thread::Builder::new()
             .name("voxbox-tile-spawn".into())
             .spawn(move || crate::studio::launch_tile(tile_ctx));
+        println!(
+            "  tile: opening the desktop tile (bottom-right) — click: utterance · \
+             double-click: constant mode · hold: push-to-talk"
+        );
     }
 
     let (pre_tx, pre_rx) = mpsc::channel::<Result<Transcriber>>();

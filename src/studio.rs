@@ -759,7 +759,7 @@ pub fn launch_tile(c: TileCtx) {
             .with_title("VoxBox"),
         ..Default::default()
     };
-    let _ = eframe::run_native(
+    let result = eframe::run_native(
         "VoxBox tile",
         opts,
         Box::new(move |cc| {
@@ -774,6 +774,9 @@ pub fn launch_tile(c: TileCtx) {
             Ok(Box::new(app) as Box<dyn eframe::App>)
         }),
     );
+    if let Err(e) = result {
+        eprintln!("  [tile] could not open: {e}");
+    }
     flag.store(false, Ordering::Relaxed);
 }
 
