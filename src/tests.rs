@@ -352,6 +352,58 @@ fn config_merge_clean_file_has_no_duplicate_warning() {
 }
 
 #[test]
+fn agent_summary_describes_templates_local_and_cloud() {
+    use crate::config::{AgentConfig, agent_summary};
+    let template = AgentConfig {
+        name: "example".into(),
+        api_base: "".into(),
+        api_key: "".into(),
+        model: "local-model".into(),
+    };
+    assert!(agent_summary(&template).contains("template"), "{}", agent_summary(&template));
+    let local = AgentConfig {
+        name: "ollama-local".into(),
+        api_base: "http://127.0.0.1:11434/v1".into(),
+        api_key: "".into(),
+        model: "llama3.2".into(),
+    };
+    let s = agent_summary(&local);
+    assert!(s.contains("local") && s.contains("llama3.2"), "{s}");
+    let cloud = AgentConfig {
+        name: "cloud-openai".into(),
+        api_base: "https://api.openai.com/v1".into(),
+        api_key: "sk-x".into(),
+        model: "gpt-4o-mini".into(),
+    };
+    assert!(agent_summary(&cloud).contains("cloud"));
+}
+
+#[test]
+fn activate_agent_in_writes_brain_routing_to_a_config_file() {
+    use crate::config::{AgentConfig, activate_agent_in};
+    let dir = std::env::temp_dir().join(format!(
+        "voxbox-agent-test-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let cfg = dir.join("config.toml");
+    std::fs::write(&cfg, "[stt]\nmodel = \"base\"\n").unwrap();
+    let agent = AgentConfig {
+        name: "ollama-local".into(),
+        api_base: "http://127.0.0.1:11434/v1".into(),
+        api_key: "".into(),
+        model: "llama3.2".into(),
+    };
+    activate_agent_in(&cfg, &agent).expect("activation must succeed");
+    let raw = std::fs::read_to_string(&cfg).unwrap();
+    assert!(raw.contains("api_base = \"http://127.0.0.1:11434/v1\""), "{raw}");
+    assert!(raw.contains("model = \"llama3.2\""), "{raw}");
+    // stt section untouched
+    assert!(raw.contains("[stt]"), "{raw}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn terminal_pick_prefers_system_default() {
     use crate::tray::terminal_pick;
     // Debian/Cinnamon ships x-terminal-emulator; it must win.

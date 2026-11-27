@@ -210,7 +210,7 @@ keeps redistribution simple.
 ## Lion Rule — honesty about what is verified
 
 - **Verified in this repository / sandbox:** the crate compiles clean (no
-  warnings), all 79 unit tests pass; hotkey-code map, ASCII→keycode map,
+  warnings), all 88 unit tests pass; hotkey-code map, ASCII→keycode map,
   injector argument shapes, tray state/label/pixmap helpers, IPC command
   parsing plus a live socket round-trip (server thread + client), config
   set-subkey/agent loading/duplicate-table healing, and the frozen 32-byte
@@ -220,6 +220,25 @@ keeps redistribution simple.
   speech sample ("And so, my fellow Americans, ask not what your country can
   do for you…") with no ONNX Runtime — the engine works on a stock Debian
   box without `pkg-config`/OpenSSL.
+- **v0.4.4 — the tile is pure X11, no toolkit at all + nothing is silent:**
+  the tile is no longer a winit/egui window — it is a hand-rolled X11
+  override-redirect overlay (`src/tile_x11.rs`, `x11rb`): the window manager
+  never manages the surface (no decorations, no shadow, no taskbar entry —
+  the same mechanism conky and notification popups use). Pixels are drawn
+  directly (rounded icon + centered logo + state tint + ring); gestures are
+  handled from raw ButtonPress/Release/Motion events through the same
+  tested TilePointer state machine. The egui tile remains only as a
+  Wayland fallback. Additionally: EVERY Studio button and tray item now
+  proves itself with a desktop notification (notify-send) + on-screen
+  status; the dead "Hotkey" line became a working "Edit settings" button
+  (opens config.toml in the editor); the agents section shows what each
+  agent is (`agent_summary`) and has a working "Open agents folder" button;
+  the installer scaffolds FOUR agent templates. Transcript cleanup
+  (`clean_transcript`) strips whisper's "[Music]" stage directions from
+  typed text. Verified: 88/88 tests, zero warnings, clean release build,
+  and a live end-to-end run of the text shell in the sandbox (intent →
+  executor → response). Honest limit: no X server in the sandbox, so the
+  overlay's on-screen look awaits the user's session.
 - **v0.4.3 — no more Cinnamon window, ever (override-redirect):** the tile
   was still being decorated by Cinnamon because a frameless *managed* window
   still gets the WM treatment (shadows, borders, focus rules). The fix is the

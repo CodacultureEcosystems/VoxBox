@@ -15,6 +15,7 @@ pub mod shell;
 pub mod stt;
 #[cfg(test)]
 pub mod tests;
+pub mod tile_x11;
 pub mod trace;
 pub mod studio;
 pub mod tray;

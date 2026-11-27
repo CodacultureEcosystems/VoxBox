@@ -353,8 +353,12 @@ pub fn list_agents() -> Vec<AgentConfig> {
 /// Activate an agent: copy its settings into the `[brain]` section of the
 /// user's config file, in place.
 pub fn activate_agent(agent: &AgentConfig) -> Result<(), String> {
-    let p = config_path();
-    let raw = std::fs::read_to_string(&p).unwrap_or_default();
+    activate_agent_in(&config_path(), agent)
+}
+
+/// Write an agent's brain routing into a specific config file (testable).
+pub fn activate_agent_in(p: &std::path::Path, agent: &AgentConfig) -> Result<(), String> {
+    let raw = std::fs::read_to_string(p).unwrap_or_default();
     let mut text = raw;
     text = set_subkey(&text, "brain", "api_base", &format!("api_base = \"{}\"", agent.api_base));
     text = set_subkey(&text, "brain", "model", &format!("model = \"{}\"", agent.model));
@@ -364,7 +368,19 @@ pub fn activate_agent(agent: &AgentConfig) -> Result<(), String> {
     if let Some(parent) = p.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    std::fs::write(&p, text).map_err(|e| e.to_string())
+    std::fs::write(p, text).map_err(|e| e.to_string())
+}
+
+/// One-line human summary of an agent, shown under the picker so selecting
+/// one PROVES what changed.
+pub fn agent_summary(a: &AgentConfig) -> String {
+    if a.api_base.is_empty() {
+        format!("{} — template: fill in api_base in the file", a.name)
+    } else if a.api_base.contains("127.0.0.1") || a.api_base.contains("localhost") {
+        format!("{} — local · {} @ {}", a.name, a.model, a.api_base)
+    } else {
+        format!("{} — cloud · {} @ {}", a.name, a.model, a.api_base)
+    }
 }
 
 /// Set `[stt]` settings (engine, model reference) in the user's config

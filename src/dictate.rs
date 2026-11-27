@@ -198,6 +198,13 @@ pub fn notify(enabled: bool, title: &str, body: &str) {
         .status();
 }
 
+/// Notification for user-initiated UI actions (Studio buttons, tray menu).
+/// These ALWAYS announce themselves — a button that only writes a config
+/// file and says nothing reads as broken. Proof-of-action is not optional.
+pub fn notify_action(title: &str, body: &str) {
+    notify(true, title, body);
+}
+
 /// Warm a Transcriber in the background; sends the built instance (or the
 /// error) through the channel.
 fn spawn_warmup(spec: WarmSpec, tx: mpsc::Sender<Result<Transcriber>>) {

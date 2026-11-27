@@ -180,6 +180,14 @@ impl Tray for VoxTray {
                 move |tray| {
                     let next = !tray.controls.constant();
                     let _ = constant_trigger.send(Signal::Constant(next));
+                    crate::dictate::notify_action(
+                        "VoxBox",
+                        if next {
+                            "constant mode ON — speak freely, toggle again to stop"
+                        } else {
+                            "constant mode OFF"
+                        },
+                    );
                 },
             )),
             MenuItem::Standard(item(
@@ -203,14 +211,27 @@ pub fn open_config() {
     let path = crate::config::config_path();
     if !path.exists() {
         eprintln!("  [tray] config not found at {} — run install.sh first", path.display());
+        crate::dictate::notify_action("VoxBox", "config.toml not found — run install.sh first");
         return;
     }
     match std::process::Command::new("xdg-open").arg(&path).spawn() {
-        Ok(_) => eprintln!("  [tray] opening {} in your editor", path.display()),
-        Err(e) => eprintln!(
-            "  [tray] could not open an editor for {} ({e}) — edit it in any text editor",
-            path.display()
-        ),
+        Ok(_) => {
+            eprintln!("  [tray] opening {} in your editor", path.display());
+            crate::dictate::notify_action(
+                "VoxBox",
+                &format!("opening {} in your editor", path.display()),
+            );
+        }
+        Err(e) => {
+            eprintln!(
+                "  [tray] could not open an editor for {} ({e}) — edit it in any text editor",
+                path.display()
+            );
+            crate::dictate::notify_action(
+                "VoxBox",
+                "no editor found — edit config.toml in any text editor",
+            );
+        }
     }
 }
 

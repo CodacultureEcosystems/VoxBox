@@ -9132,7 +9132,7 @@ checksum = "6a02e4885ed3bc0f2de90ea6dd45ebcbb66dacffe03547fadbb0eeae2770887d"
 
 [[package]]
 name = "voxbox"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "anyhow",
  "clap",
@@ -9148,6 +9148,7 @@ dependencies = [
  "ureq 2.12.1",
  "whisper-rs",
  "winit",
+ "x11rb",
 ]
 
 [[package]]

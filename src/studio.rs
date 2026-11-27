@@ -15,8 +15,8 @@ use crate::dictate::{Controls, Signal};
 use crate::stt::SttEngine;
 
 pub static STATE: AtomicU8 = AtomicU8::new(0);
-const IDLE: u8 = 0;
-const RECORDING: u8 = 1;
+pub(crate) const IDLE: u8 = 0;
+pub(crate) const RECORDING: u8 = 1;
 
 const CATALOG_URL: &str = "https://rhasspy.github.io/piper-samples/";
 
@@ -279,19 +279,32 @@ impl eframe::App for StudioApp {
                     {
                         match crate::ipc::send("toggle") {
                             Ok(state) => {
-                                self.status = state;
+                                self.status = state.clone();
                                 self.last_poll = Instant::now();
+                                crate::dictate::notify_action(
+                                    "VoxBox",
+                                    &format!("recording: {state} — speak now"),
+                                );
                             }
                             Err(_) => {
                                 Self::launch_resident();
                                 self.status = "resident waking…".into();
+                                crate::dictate::notify_action(
+                                    "VoxBox",
+                                    "resident was asleep — waking it now",
+                                );
                             }
                         }
                     }
-                    ui.weak(format!(
-                        "Hotkey: {} — change in ~/.config/voxbox/config.toml [dictation]",
-                        self.key.to_uppercase()
-                    ));
+                    ui.horizontal(|ui| {
+                        ui.weak(format!(
+                            "Hotkey: {} (secondary — the icon is the main switch)",
+                            self.key.to_uppercase()
+                        ));
+                        if ui.small_button("Edit settings").clicked() {
+                            crate::tray::open_config();
+                        }
+                    });
                     ui.add_space(10.0);
 
                     ui.heading("Conversation");
@@ -301,11 +314,19 @@ impl eframe::App for StudioApp {
                             crate::tray::spawn_shell(&[]);
                             *self.test_status.lock().expect("status") =
                                 "voice shell opened in a new terminal window".into();
+                            crate::dictate::notify_action(
+                                "VoxBox",
+                                "voice shell opened in a new terminal window",
+                            );
                         }
                         if ui.button("Text mode").clicked() {
                             crate::tray::spawn_shell(&["--text"]);
                             *self.test_status.lock().expect("status") =
                                 "text shell opened in a new terminal window".into();
+                            crate::dictate::notify_action(
+                                "VoxBox",
+                                "text shell opened in a new terminal window",
+                            );
                         }
                     });
                     ui.add_space(10.0);
@@ -322,8 +343,9 @@ impl eframe::App for StudioApp {
                         });
                     if self.selected != before {
                         let _ = crate::config::save_tts(None, Some(&self.voice_path()), None);
-                        *self.test_status.lock().expect("status") =
-                            format!("voice saved: {}", self.labels[self.selected]);
+                        let msg = format!("voice saved: {}", self.labels[self.selected]);
+                        *self.test_status.lock().expect("status") = msg.clone();
+                        crate::dictate::notify_action("VoxBox", &msg);
                     }
                     ui.horizontal(|ui| {
                         if ui.button("Speak a test line").clicked() {
@@ -351,6 +373,10 @@ impl eframe::App for StudioApp {
                                 Ok(_) => {
                                     *status.lock().expect("status") =
                                         "opening the voice catalog in your browser".into();
+                                    crate::dictate::notify_action(
+                                        "VoxBox",
+                                        "opening the Piper voice catalog in your browser",
+                                    );
                                 }
                                 Err(e) => {
                                     *status.lock().expect("status") =
@@ -362,8 +388,10 @@ impl eframe::App for StudioApp {
                     let response = ui.checkbox(&mut self.tts_on, "Speak replies out loud");
                     if response.changed() {
                         let _ = crate::config::save_tts(None, None, Some(self.tts_on));
-                        *self.test_status.lock().expect("status") =
+                        let msg =
                             format!("spoken replies: {}", if self.tts_on { "on" } else { "off" });
+                        *self.test_status.lock().expect("status") = msg.clone();
+                        crate::dictate::notify_action("VoxBox", &msg);
                     }
                     ui.add_space(6.0);
                     let note = self
@@ -388,10 +416,12 @@ impl eframe::App for StudioApp {
                     if self.engine != before_engine {
                         let _ = crate::config::save_stt(Some(self.engine.as_str()), None);
                         self.request_reload();
-                        *self.test_status.lock().expect("status") = format!(
+                        let msg = format!(
                             "engine → {} (warming in the background)",
                             self.engine.as_str()
                         );
+                        *self.test_status.lock().expect("status") = msg.clone();
+                        crate::dictate::notify_action("VoxBox", &msg);
                     }
                     ui.weak(
                         "Parakeet's model (~2.5 GB) downloads on first use; local paths work in the field below.",
@@ -407,8 +437,13 @@ impl eframe::App for StudioApp {
                             let m = self.model_field.trim().to_string();
                             let _ = crate::config::save_stt(None, Some(&m));
                             self.request_reload();
-                            *self.test_status.lock().expect("status") =
-                                "model loaded — warming in the background".into();
+                            let msg = if m.is_empty() {
+                                "bundled model loaded — warming in the background".to_string()
+                            } else {
+                                format!("model {m} loaded — warming in the background")
+                            };
+                            *self.test_status.lock().expect("status") = msg.clone();
+                            crate::dictate::notify_action("VoxBox", &msg);
                         }
                     });
                     ui.weak(
@@ -447,20 +482,62 @@ impl eframe::App for StudioApp {
                                         "agent {} active (brain routes there now)",
                                         agent.name
                                     );
+                                    crate::dictate::notify_action(
+                                        "VoxBox",
+                                        &format!(
+                                            "agent {} active — spoken commands route there now",
+                                            agent.name
+                                        ),
+                                    );
                                 }
-                                Err(e) => self.agent_note = format!("activation failed: {e}"),
+                                Err(e) => {
+                                    self.agent_note = format!("activation failed: {e}");
+                                    crate::dictate::notify_action(
+                                        "VoxBox",
+                                        &format!("agent activation failed: {e}"),
+                                    );
+                                }
                             }
                         }
+                        // Show what the highlighted agent actually is.
+                        let idx = self.agent_selected.min(self.agents.len() - 1);
+                        ui.weak(crate::config::agent_summary(&self.agents[idx]));
                     }
-                    if ui.button("Rescan agents").clicked() {
-                        self.agents = crate::config::list_agents();
-                        self.agent_selected = 0;
-                        self.agent_note = if self.agents.is_empty() {
-                            "no agents found".into()
-                        } else {
-                            format!("{} agents available", self.agents.len())
-                        };
-                    }
+                    ui.horizontal(|ui| {
+                        if ui.button("Rescan agents").clicked() {
+                            self.agents = crate::config::list_agents();
+                            self.agent_selected = 0;
+                            self.agent_note = if self.agents.is_empty() {
+                                "no agents found".into()
+                            } else {
+                                format!("{} agents available", self.agents.len())
+                            };
+                            crate::dictate::notify_action(
+                                "VoxBox",
+                                &format!("agents rescan: {} found", self.agents.len()),
+                            );
+                        }
+                        if ui.button("Open agents folder").clicked() {
+                            let dir = crate::config::agents_dir();
+                            let _ = std::fs::create_dir_all(&dir);
+                            match std::process::Command::new("xdg-open").arg(&dir).spawn() {
+                                Ok(_) => {
+                                    crate::dictate::notify_action(
+                                        "VoxBox",
+                                        "opened the agents folder — one .toml per agent",
+                                    );
+                                    self.agent_note = format!(
+                                        "opened {} — drop a .toml per agent, then Rescan",
+                                        dir.display()
+                                    );
+                                }
+                                Err(e) => {
+                                    self.agent_note =
+                                        format!("could not open folder: {e} — {}", dir.display());
+                                }
+                            }
+                        }
+                    });
                     ui.add_space(6.0);
                     ui.weak(&self.agent_note);
                     ui.add_space(6.0);
@@ -569,10 +646,20 @@ pub enum TileEvent {
 }
 
 /// Everything the toggle icon needs from the resident (same process).
+#[derive(Clone)]
 pub struct TileCtx {
     pub trigger: Option<mpsc::Sender<Signal>>,
     pub controls: Option<Arc<Controls>>,
     pub open_flag: Arc<AtomicBool>,
+}
+
+impl TileCtx {
+    pub fn constant(&self) -> bool {
+        self.controls
+            .as_ref()
+            .map(|c| c.constant())
+            .unwrap_or(false)
+    }
 }
 
 /// Pure pointer state machine for the tile gestures. `now` is injected so
@@ -653,7 +740,7 @@ impl TilePointer {
     }
 }
 
-fn decode_png_rgba(bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
+pub(crate) fn decode_png_rgba(bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
     let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
     let mut reader = decoder.read_info().ok()?;
     let mut buf = vec![0u8; reader.output_buffer_size()?];
@@ -670,7 +757,7 @@ fn decode_png_rgba(bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
     Some((w, h, rgba))
 }
 
-const LOGO_PNG: &[u8] = include_bytes!("../assets/voxbox.png");
+pub(crate) const LOGO_PNG: &[u8] = include_bytes!("../assets/voxbox.png");
 
 struct TileApp {
     trigger: Option<mpsc::Sender<Signal>>,
@@ -882,14 +969,24 @@ impl eframe::App for TileApp {
     }
 }
 
-/// Open the desktop toggle icon (one at a time). Frameless: no title bar,
-/// no taskbar entry — an icon, not a window.
+/// Open the desktop toggle icon (one at a time). Primary renderer is the
+/// pure-X11 override-redirect overlay (tile_x11) — the window manager never
+/// touches that surface, so it cannot be decorated into a "window". The
+/// egui tile is only a fallback (e.g. Wayland sessions, where raw X11 may
+/// not exist).
 pub fn launch_tile(c: TileCtx) {
     if c.open_flag
         .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
         .is_err()
     {
         return;
+    }
+    match crate::tile_x11::run(c.clone()) {
+        Ok(()) => {
+            c.open_flag.store(false, Ordering::Relaxed);
+            return;
+        }
+        Err(e) => eprintln!("  [tile] raw X11 unavailable ({e}) — using the GUI fallback"),
     }
     let texture: Option<egui::TextureHandle> = None;
     let app = TileApp {
