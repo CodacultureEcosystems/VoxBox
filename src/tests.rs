@@ -274,3 +274,41 @@ fn hallucination_real_speech_survives() {
     assert!(!is_hallucination("(upbeat music) turn off the lights"));
     assert!(!is_hallucination("What music is playing in the other room?"));
 }
+
+#[test]
+fn config_merge_duplicate_sections_heals() {
+    // The user's actual broken file shape: example [tts] + installer-appended [tts].
+    use crate::config::merge_duplicate_sections;
+    let raw = "[stt]\nmodel = \"base\"\n\n[tts]\nengine = \"auto\"\nvoice = \"\"\nenabled = true\n\n[dictation]\nkey = \"pause\"\n\n[tts]\nengine = \"piper\"\nvoice = \"/home/Architect/.local/share/voxbox/voices/en_US-lessac-medium.onnx\"\nenabled = true\n";
+    let healed = merge_duplicate_sections(raw);
+    let (cfg, warnings) = crate::config::Config::merge(&healed);
+    assert!(warnings.is_empty(), "healed file must parse whole: {warnings:?}");
+    assert_eq!(cfg.tts.engine, "piper", "later occurrence wins");
+    assert_eq!(
+        cfg.tts.voice,
+        "/home/Architect/.local/share/voxbox/voices/en_US-lessac-medium.onnx"
+    );
+    assert_eq!(cfg.stt.model, "base");
+    assert_eq!(cfg.dictation.key, "pause");
+    assert_eq!(healed.matches("[tts]").count(), 1, "exactly one [tts] table");
+    // Set_subkey on the healed file must not resurrect the duplicate.
+    let again = crate::config::set_subkey(&healed, "tts", "voice", "voice = \"x.onnx\"");
+    assert_eq!(again.matches("[tts]").count(), 1);
+    assert!(again.contains("voice = \"x.onnx\""));
+}
+
+#[test]
+fn config_merge_warns_on_duplicate_table() {
+    let raw = "[tts]\nengine = \"auto\"\n[tts]\nengine = \"piper\"\n";
+    let (_, warnings) = crate::config::Config::merge(raw);
+    assert!(
+        warnings.iter().any(|w| w.contains("duplicate [tts]")),
+        "expected a duplicate-table warning, got {warnings:?}"
+    );
+}
+
+#[test]
+fn config_merge_clean_file_has_no_duplicate_warning() {
+    let (_, warnings) = crate::config::Config::merge("[tts]\nengine = \"auto\"\n[stt]\nmodel = \"base\"\n");
+    assert!(warnings.is_empty(), "{warnings:?}");
+}

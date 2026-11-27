@@ -188,6 +188,22 @@ impl Config {
         if let Ok(c) = toml::from_str::<Config>(raw) {
             return (c, warnings);
         }
+        // Diagnose the most common breakage up front: duplicate tables.
+        let mut seen: Vec<&str> = Vec::new();
+        for line in raw.lines() {
+            let t = line.trim();
+            if t.starts_with('[') && t.ends_with(']') && !t.starts_with("[[") {
+                let name = t[1..t.len() - 1].trim();
+                if seen.contains(&name) {
+                    warnings.push(format!(
+                        "duplicate [{name}] table — TOML forbids redefining a table; \
+                         keep only one (a fresh `bash install.sh` heals this automatically)"
+                    ));
+                } else {
+                    seen.push(name);
+                }
+            }
+        }
         warnings.push("whole-file parse failed; recovering per section".into());
         let mut config = Config::default();
         if let Ok(v) = toml::from_str::<toml::Value>(raw) {
@@ -356,6 +372,7 @@ pub fn activate_agent(agent: &AgentConfig) -> Result<(), String> {
 pub fn save_stt(engine: Option<&str>, model: Option<&str>) -> Result<(), String> {
     let p = config_path();
     let raw = std::fs::read_to_string(&p).unwrap_or_default();
+    let raw = merge_duplicate_sections(&raw); // heal duplicate tables before editing
     let mut text = raw;
     if let Some(e) = engine {
         text = set_subkey(&text, "stt", "engine", &format!("engine = \"{e}\""));
@@ -386,6 +403,7 @@ pub fn save_tts(
 ) -> Result<(), String> {
     let p = config_path();
     let raw = std::fs::read_to_string(&p).unwrap_or_default();
+    let raw = merge_duplicate_sections(&raw); // heal duplicate tables before editing
     let mut text = raw;
     if let Some(e) = engine {
         text = set_subkey(&text, "tts", "engine", &format!("engine = \"{e}\""));
@@ -400,6 +418,89 @@ pub fn save_tts(
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     std::fs::write(&p, text).map_err(|e| e.to_string())
+}
+
+/// Heal a config that defines the same table more than once. TOML forbids
+/// duplicate tables (an older installer appended a second `[tts]` block to
+/// the example config, which already had one, so the whole-file parse failed
+/// on every startup). Later occurrences win for the keys they set; the merged
+/// block keeps the position of the first occurrence.
+pub fn merge_duplicate_sections(raw: &str) -> String {
+    fn header_name(line: &str) -> Option<&str> {
+        let t = line.trim();
+        if t.starts_with('[') && t.ends_with(']') && !t.starts_with("[[") {
+            Some(t[1..t.len() - 1].trim())
+        } else {
+            None
+        }
+    }
+
+    struct Block {
+        name: Option<String>,
+        lines: Vec<String>,
+    }
+    let mut blocks: Vec<Block> = vec![Block { name: None, lines: Vec::new() }];
+    for line in raw.lines() {
+        match header_name(line) {
+            Some(n) => blocks.push(Block {
+                name: Some(n.to_string()),
+                lines: Vec::new(),
+            }),
+            None => blocks
+                .last_mut()
+                .expect("preamble block always present")
+                .lines
+                .push(line.to_string()),
+        }
+    }
+
+    // Fold duplicate sections into their first occurrence.
+    let mut merged: Vec<Block> = Vec::new();
+    for b in blocks {
+        match &b.name {
+            None => merged.push(b),
+            Some(name) => {
+                if let Some(first) = merged
+                    .iter_mut()
+                    .find(|m| m.name.as_deref() == Some(name.as_str()))
+                {
+                    for line in b.lines {
+                        let t = line.trim();
+                        if t.is_empty() || t.starts_with('#') {
+                            continue;
+                        }
+                        let key = t.split('=').next().unwrap_or("").trim().to_string();
+                        if key.is_empty() {
+                            continue;
+                        }
+                        first.lines.retain(|l| {
+                            let lt = l.trim();
+                            let lk = lt.split('=').next().unwrap_or("").trim();
+                            !(lt.contains('=') && !lt.starts_with('#') && lk == key)
+                        });
+                        first.lines.push(line);
+                    }
+                } else {
+                    merged.push(b);
+                }
+            }
+        }
+    }
+
+    let mut out = String::new();
+    for b in &merged {
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        if let Some(n) = &b.name {
+            out.push_str(&format!("[{n}]\n"));
+        }
+        for l in &b.lines {
+            out.push_str(l);
+            out.push('\n');
+        }
+    }
+    out
 }
 
 /// Rewrite/insert `value_line` for `key` inside `[section]` of raw TOML text,

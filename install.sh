@@ -140,11 +140,22 @@ fi
 if [ ! -f "$CONFIG_DIR/config.toml" ]; then
     say "Writing $CONFIG_DIR/config.toml"
     mkdir -p "$CONFIG_DIR"
-    {
-        sed "s/^model = \"base\"/model = \"$MODEL\"/" "$REPO_DIR/config.example.toml"
-        printf '\n[tts]\nengine = "piper"\nvoice = "%s/%s.onnx"\nenabled = true\n' \
-            "$VOICE_DIR" "$VOICE_NAME"
-    } > "$CONFIG_DIR/config.toml"
+    # Edit the example in place — never append a second [tts] table (TOML
+    # forbids duplicate tables; that bug broke whole-file parsing).
+    sed -e "s/^model = \"base\"/model = \"$MODEL\"/" \
+        -e 's|^engine = "auto"|engine = "piper"|' \
+        -e "s|^voice = \"\".*|voice = \"$VOICE_DIR/$VOICE_NAME.onnx\"|" \
+        "$REPO_DIR/config.example.toml" > "$CONFIG_DIR/config.toml"
+fi
+
+# Heal configs written by older installers that appended a duplicate [tts]
+# table: drop the FIRST occurrence, the later (piper) block wins.
+if [ -f "$CONFIG_DIR/config.toml" ] && \
+   [ "$(grep -c '^\[tts\]' "$CONFIG_DIR/config.toml" 2>/dev/null)" -gt 1 ]; then
+    say "Removing duplicate [tts] section from config.toml (old installer bug)"
+    awk '/^\[tts\]$/{c++; if(c==1){s=1; next}} s{if(/^\[/){s=0} else next} {print}' \
+        "$CONFIG_DIR/config.toml" > "$CONFIG_DIR/config.toml.tmp" &&
+        mv "$CONFIG_DIR/config.toml.tmp" "$CONFIG_DIR/config.toml"
 fi
 
 if [ -f "$CONFIG_DIR/config.toml" ] && ! grep -q '^\[dictation\]' "$CONFIG_DIR/config.toml"; then
