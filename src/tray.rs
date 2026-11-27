@@ -200,6 +200,17 @@ impl Tray for VoxTray {
     }
 }
 
+/// Pick the first available terminal emulator. Pure: `available` is the
+/// list of candidates found on PATH, so tests can drive it.
+pub fn terminal_pick(available: &[&str]) -> Option<&'static str> {
+    for candidate in ["x-terminal-emulator", "gnome-terminal", "konsole", "xfce4-terminal", "xterm"] {
+        if available.contains(&candidate) {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
 pub fn spawn_shell(args: &[&str]) {
     let home = std::env::var("HOME").unwrap_or_default();
     let bin = format!("{home}/.local/bin/voxbox");
@@ -208,11 +219,48 @@ pub fn spawn_shell(args: &[&str]) {
     } else {
         "voxbox".into()
     };
-    let _ = std::process::Command::new(path)
-        .args(args)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn();
+    // The voice shell is interactive (it reads the mic + stdin), so it must
+    // be VISIBLE: run it inside a terminal emulator. Spawning it headless
+    // made the buttons look like they do nothing.
+    let mut line = path.clone();
+    for a in args {
+        line.push(' ');
+        line.push_str(a);
+    }
+    let candidates = ["x-terminal-emulator", "gnome-terminal", "konsole", "xfce4-terminal", "xterm"];
+    let found: Vec<&str> = candidates
+        .iter()
+        .copied()
+        .filter(|t| which_exists(t))
+        .collect();
+    if let Some(term) = terminal_pick(&found) {
+        let result = std::process::Command::new(term)
+            .arg("-e")
+            .arg(&line)
+            .spawn();
+        if let Err(e) = result {
+            eprintln!("  [shell] {term} failed: {e} — running headless with a log");
+        } else {
+            return;
+        }
+    }
+    // Last resort: detached, but loud about where the output went.
+    let log = format!("{home}/.cache/voxbox/voxbox-shell.log");
+    if let Some(f) = std::fs::File::create(&log).ok() {
+        let _ = std::process::Command::new(path)
+            .args(args)
+            .stdout(f)
+            .stderr(std::process::Stdio::null())
+            .spawn();
+        eprintln!("  [shell] no terminal found; output goes to {log}");
+    }
+}
+
+fn which_exists(bin: &str) -> bool {
+    let path = std::env::var("PATH").unwrap_or_default();
+    std::env::split_paths(&path)
+        .map(|dir| dir.join(bin))
+        .any(|p| p.is_file())
 }
 
 /// Spawn the tray Being; None when no SNI/D-Bus host is reachable

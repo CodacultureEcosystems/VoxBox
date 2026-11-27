@@ -332,7 +332,24 @@ impl eframe::App for StudioApp {
                                     *status.lock().expect("status") = note;
                                 });
                         }
-                        ui.hyperlink_to("more voices", CATALOG_URL);
+                        if ui.button("more voices…").clicked() {
+                            // egui's hyperlink opener can fail silently;
+                            // xdg-open with a visible error cannot.
+                            let status = Arc::clone(&self.test_status);
+                            match std::process::Command::new("xdg-open")
+                                .arg(CATALOG_URL)
+                                .spawn()
+                            {
+                                Ok(_) => {
+                                    *status.lock().expect("status") =
+                                        "opening the voice catalog in your browser".into();
+                                }
+                                Err(e) => {
+                                    *status.lock().expect("status") =
+                                        format!("could not open browser: {e} — visit {CATALOG_URL}");
+                                }
+                            }
+                        }
                     });
                     let response = ui.checkbox(&mut self.tts_on, "Speak replies out loud");
                     if response.changed() {

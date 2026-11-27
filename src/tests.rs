@@ -337,3 +337,16 @@ fn config_merge_clean_file_has_no_duplicate_warning() {
     let (_, warnings) = crate::config::Config::merge("[tts]\nengine = \"auto\"\n[stt]\nmodel = \"base\"\n");
     assert!(warnings.is_empty(), "{warnings:?}");
 }
+
+#[test]
+fn terminal_pick_prefers_system_default() {
+    use crate::tray::terminal_pick;
+    // Debian/Cinnamon ships x-terminal-emulator; it must win.
+    assert_eq!(
+        terminal_pick(&["xterm", "gnome-terminal", "x-terminal-emulator"]),
+        Some("x-terminal-emulator")
+    );
+    assert_eq!(terminal_pick(&["gnome-terminal"]), Some("gnome-terminal"));
+    assert_eq!(terminal_pick(&[]), None, "no terminal -> headless fallback");
+    assert_eq!(terminal_pick(&["not-a-terminal"]), None);
+}
