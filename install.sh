@@ -61,6 +61,26 @@ fi
 say "Building voxbox + vbd (release)"
 (cd "$REPO_DIR" && cargo build --release)
 
+# ── 2a. Verify what was actually built ──────────────────────────────────
+# A silent old-binary build is the worst failure this installer can have:
+# everything after it looks like the new version but isn't. Check loudly.
+CARGO_VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' "$REPO_DIR/Cargo.toml" | head -1)"
+BUILT_VERSION="$("$REPO_DIR/target/release/vbd" --version 2>/dev/null | awk '{print $2}')"
+if [ "$BUILT_VERSION" != "$CARGO_VERSION" ]; then
+    echo "  INSTALL ABORTED: the build produced vbd $BUILT_VERSION but this" >&2
+    echo "  checkout says version $CARGO_VERSION — cargo reused a stale build" >&2
+    echo "  or the checkout is not what you think. Run this and retry:" >&2
+    echo "    cd $REPO_DIR && cargo clean && $(basename "$0")" >&2
+    exit 1
+fi
+echo "  verified: built vbd $BUILT_VERSION"
+# Warn when the checkout is detached or not on main (stale-checkout trap).
+BRANCH="$(git -C "$REPO_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"
+if [ "$BRANCH" != "main" ] && [ "$BRANCH" != "unknown" ]; then
+    echo "  WARNING: this checkout is on '$BRANCH', not main — you may be" >&2
+    echo "  building an older release. Use: git switch main && git pull" >&2
+fi
+
 # ── 2b. Parakeet model (optional now; also auto-downloads on first use) ───
 PARAKEET_DIR="$CACHE_DIR/parakeet-tdt-0.6b-v3"
 if [ "$WITH_PARAKEET" = "1" ]; then
