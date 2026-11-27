@@ -197,7 +197,7 @@ Commands run as your own user with a timeout (default 20 s).
 ## Development
 
 ```bash
-cargo test          # 72 unit tests (brain, executor, vad, config, tts, keys, inject, ipc)
+cargo test          # 78 unit tests (brain, executor, vad, config, tts, keys, inject, ipc, tile)
 cargo build --release
 ```
 
@@ -210,7 +210,7 @@ keeps redistribution simple.
 ## Lion Rule — honesty about what is verified
 
 - **Verified in this repository / sandbox:** the crate compiles clean (no
-  warnings), all 72 unit tests pass; hotkey-code map, ASCII→keycode map,
+  warnings), all 78 unit tests pass; hotkey-code map, ASCII→keycode map,
   injector argument shapes, tray state/label/pixmap helpers, IPC command
   parsing plus a live socket round-trip (server thread + client), config
   set-subkey/agent loading/duplicate-table healing, and the frozen 32-byte
@@ -220,8 +220,18 @@ keeps redistribution simple.
   speech sample ("And so, my fellow Americans, ask not what your country can
   do for you…") with no ONNX Runtime — the engine works on a stock Debian
   box without `pkg-config`/OpenSSL.
-- **v0.4.0 — the WisprFlow reshape:** the floating tile window is GONE
-  (deleted). One app, one name: the single `voxbox.desktop` entry is both the
+- **v0.4.2 — the toggle icon is BACK, done right (WisprFlow Flow Bar):**
+  0.4.0 deleted the floating window because the user wanted an icon, not a
+  window — but it took the on-screen toggle with it. v0.4.2 restores it as a
+  true icon: **frameless** (`with_decorations(false)` — 0.3.x's bug was a
+  missing decorations flag, which is why it showed a title bar),
+  **always-on-top**, **no taskbar entry**, sized to fit its content,
+  bottom-right at start, **draggable**, right-click menu (Open Studio /
+  Hide), and Studio/IPC can re-show it (`tile` command). Gesture logic is
+  the restored pure state machine (5 tests). Verified by compile + tests
+  only in the sandbox — on-desktop appearance needs the user's session.
+- **v0.4.0 — the WisprFlow reshape:** one app, one name: the single
+  `voxbox.desktop` entry is both the
   menu app and the desktop icon; clicking it runs `vbd --toggle`, which
   toggles an utterance on the resident or wakes it. The tray and Studio open
   Studio in its own process (a window must own its process's main thread —

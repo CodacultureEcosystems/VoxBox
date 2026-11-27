@@ -236,6 +236,7 @@ fn ipc_parse_cmd_maps_all_commands() {
     assert_eq!(parse_cmd("constant on"), Some(Signal::Constant(true)));
     assert_eq!(parse_cmd("constant off"), Some(Signal::Constant(false)));
     assert_eq!(parse_cmd("reload"), Some(Signal::Reload));
+    assert_eq!(parse_cmd("tile"), Some(Signal::TileShow));
     assert_eq!(parse_cmd("status"), None, "status is answered by the server, not the loop");
     assert_eq!(parse_cmd("rm -rf /"), None, "arbitrary lines never become signals");
     assert_eq!(parse_cmd(""), None);

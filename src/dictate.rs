@@ -24,6 +24,8 @@ pub enum Signal {
     HoldStart,
     Constant(bool),
     Reload,
+    /// Re-show the desktop toggle icon after it was hidden.
+    TileShow,
 }
 
 /// Atomics shared with the tile window. Written directly for hold-release
@@ -247,12 +249,31 @@ pub fn run(config: Config, config_path: Option<&str>) -> Result<()> {
     let (tx, rx) = mpsc::channel::<Signal>();
     let quit = Arc::new(AtomicBool::new(false));
     let controls = Controls::new();
+    let tile_open = Arc::new(AtomicBool::new(false));
     let tray = crate::tray::spawn(
         &key_name,
         tx.clone(),
         Arc::clone(&quit),
         Arc::clone(&controls),
     );
+
+    // The desktop toggle icon rides with the resident — visible immediately
+    // (WisprFlow Flow Bar shape: frameless, always-on-top, click to talk).
+    {
+        let tile_ctx = crate::studio::TileCtx {
+            trigger: Some(tx.clone()),
+            controls: Some(Arc::clone(&controls)),
+            open_flag: Arc::clone(&tile_open),
+        };
+        let _ = std::thread::Builder::new()
+            .name("voxbox-tile-spawn".into())
+            .spawn(move || crate::studio::launch_tile(tile_ctx));
+        println!(
+            "  tile: opening the desktop toggle icon (bottom-right) — click: \
+             utterance · double-click: constant mode · hold: push-to-talk · \
+             drag: move · right-click: menu"
+        );
+    }
 
     // The IPC socket: desktop icon, Studio window, and CLI are separate
     // processes — they drive the resident through here (WisprFlow shape).
@@ -330,6 +351,17 @@ pub fn run(config: Config, config_path: Option<&str>) -> Result<()> {
         while rx.try_recv().is_ok() {}
 
         match sig {
+            Signal::TileShow => {
+                let tile_ctx = crate::studio::TileCtx {
+                    trigger: Some(tx.clone()),
+                    controls: Some(Arc::clone(&controls)),
+                    open_flag: Arc::clone(&tile_open),
+                };
+                let _ = std::thread::Builder::new()
+                    .name("voxbox-tile-spawn".into())
+                    .spawn(move || crate::studio::launch_tile(tile_ctx));
+                continue;
+            }
             Signal::Reload => {
                 transcriber = None;
                 let fresh = Config::load(config_path);
@@ -349,7 +381,7 @@ pub fn run(config: Config, config_path: Option<&str>) -> Result<()> {
                     continue;
                 }
                 println!(
-                    "  ◉ constant mode ON — speak freely; double-click the tile (or press {key_display}) to stop"
+                    "  ◉ constant mode ON — speak freely; double-click the toggle icon (or press {key_display}) to stop"
                 );
                 notify(notifications, "VoxBox", "Constant mode on");
                 while controls.constant() {

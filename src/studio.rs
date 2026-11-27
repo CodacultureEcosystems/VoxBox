@@ -5,11 +5,13 @@
 //! UI — one window, opened from the tray or `vbd --window`, running in its
 //! own process. It drives the resident over the IPC socket (`crate::ipc`).
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use eframe::egui;
 
+use crate::dictate::{Controls, Signal};
 use crate::stt::SttEngine;
 
 pub static STATE: AtomicU8 = AtomicU8::new(0);
@@ -453,6 +455,21 @@ impl eframe::App for StudioApp {
                     }
                     ui.add_space(6.0);
                     ui.weak(&self.agent_note);
+                    ui.add_space(6.0);
+                    if ui.button("Show the desktop toggle icon").clicked() {
+                        match crate::ipc::send("tile") {
+                            Ok(_) => {
+                                self.status = "toggle icon shown".into();
+                                self.last_poll = Instant::now();
+                            }
+                            Err(_) => {
+                                Self::launch_resident();
+                                self.status = "resident waking…".into();
+                            }
+                        }
+                    }
+                    ui.weak("The toggle icon rides with the resident: click = talk · \
+                             double-click = constant mode · drag = move · right-click = menu.");
 
                     ui.add_space(10.0);
                     ui.weak("Desktop icon: click “VoxBox Talk” on your desktop to talk — \
@@ -513,5 +530,435 @@ pub fn state_word() -> String {
     match STATE.load(Ordering::Relaxed) {
         RECORDING => "recording".to_string(),
         _ => "idle".to_string(),
+    }
+}
+
+// ------------------------------------------------- desktop toggle icon ---
+//
+// The WisprFlow Flow Bar equivalent: a small frameless always-on-top icon
+// riding above the desktop. NOT a window — no title bar, no taskbar entry.
+//   single click   → one utterance
+//   double click   → constant mode on/off
+//   hold + release → push-to-talk
+//   drag           → move it anywhere
+//   right-click    → Open Studio / Hide
+
+/// Gesture thresholds for the desktop toggle icon.
+pub const HOLD_MS: u64 = 350;
+pub const DOUBLE_MS: u64 = 300;
+/// Movement (px) beyond which a press is a drag, not a gesture.
+pub const DRAG_PX: f32 = 6.0;
+
+/// What the tile wants done; `launch_tile` maps these onto the resident.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TileEvent {
+    Toggle,
+    DoubleClick,
+    HoldStart,
+    HoldEnd,
+}
+
+/// Everything the toggle icon needs from the resident (same process).
+pub struct TileCtx {
+    pub trigger: Option<mpsc::Sender<Signal>>,
+    pub controls: Option<Arc<Controls>>,
+    pub open_flag: Arc<AtomicBool>,
+}
+
+/// Pure pointer state machine for the tile gestures. `now` is injected so
+/// tests can drive it deterministically.
+#[derive(Debug, Default)]
+pub struct TilePointer {
+    press_at: Option<Instant>,
+    hold_sent: bool,
+    last_release: Option<Instant>,
+    suppress_toggle: bool,
+}
+
+impl TilePointer {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Feed one frame of pointer state; returns the gesture (if any).
+    pub fn step(
+        &mut self,
+        pressed_now: bool,
+        released_now: bool,
+        now: Instant,
+        constant_on: bool,
+    ) -> Option<TileEvent> {
+        if pressed_now && self.press_at.is_none() {
+            if let Some(prev) = self.last_release {
+                if now.duration_since(prev) <= Duration::from_millis(DOUBLE_MS) {
+                    self.last_release = None;
+                    self.press_at = Some(now);
+                    self.hold_sent = false;
+                    self.suppress_toggle = true;
+                    return Some(TileEvent::DoubleClick);
+                }
+            }
+            self.press_at = Some(now);
+            self.hold_sent = false;
+            self.suppress_toggle = false;
+            return None;
+        }
+        if pressed_now {
+            if self.press_at.is_some()
+                && !self.hold_sent
+                && now.duration_since(self.press_at.expect("press known"))
+                    >= Duration::from_millis(HOLD_MS)
+            {
+                self.hold_sent = true;
+                return Some(TileEvent::HoldStart);
+            }
+            return None;
+        }
+        // Not pressed right now.
+        if released_now {
+            if let Some(start) = self.press_at.take() {
+                if self.hold_sent || now.duration_since(start) >= Duration::from_millis(HOLD_MS) {
+                    self.last_release = None;
+                    return Some(TileEvent::HoldEnd);
+                }
+                if self.suppress_toggle {
+                    self.suppress_toggle = false;
+                } else {
+                    self.last_release = Some(now);
+                }
+            }
+            return None;
+        }
+        if self.press_at.is_some() {
+            return None;
+        }
+        if let Some(rel) = self.last_release {
+            if now.duration_since(rel) > Duration::from_millis(DOUBLE_MS) {
+                self.last_release = None;
+                return Some(TileEvent::Toggle);
+            }
+        }
+        let _ = constant_on;
+        None
+    }
+}
+
+fn decode_png_rgba(bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
+    let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
+    let mut reader = decoder.read_info().ok()?;
+    let mut buf = vec![0u8; reader.output_buffer_size()?];
+    let info = reader.next_frame(&mut buf).ok()?;
+    let (w, h) = (info.width, info.height);
+    let rgba = match info.color_type {
+        png::ColorType::Rgba => buf[..w as usize * h as usize * 4].to_vec(),
+        png::ColorType::Rgb => buf[..w as usize * h as usize * 3]
+            .chunks_exact(3)
+            .flat_map(|p| [p[0], p[1], p[2], 255])
+            .collect(),
+        _ => return None,
+    };
+    Some((w, h, rgba))
+}
+
+const LOGO_PNG: &[u8] = include_bytes!("../assets/voxbox.png");
+
+struct TileApp {
+    trigger: Option<mpsc::Sender<Signal>>,
+    controls: Option<Arc<Controls>>,
+    texture: Option<egui::TextureHandle>,
+    pointer: TilePointer,
+    was_pressed: bool,
+    positioned: bool,
+    pos: Option<egui::Pos2>,
+    drag_dist: f32,
+    menu_open: bool,
+    last_event_note: String,
+}
+
+impl TileApp {
+    fn note(&mut self, event: TileEvent) {
+        self.last_event_note = match event {
+            TileEvent::Toggle => "one utterance…".into(),
+            TileEvent::DoubleClick => "double click — constant mode".into(),
+            TileEvent::HoldStart => "hold — talk, release to stop".into(),
+            TileEvent::HoldEnd => "released — landing text…".into(),
+        };
+    }
+}
+
+impl eframe::App for TileApp {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        if !self.positioned {
+            let screen = ui.ctx().input(|i| i.viewport_rect());
+            if screen.width() > 200.0 {
+                let pos = egui::pos2(screen.right() - 150.0, screen.bottom() - 210.0);
+                ui.ctx()
+                    .send_viewport_cmd(egui::ViewportCommand::OuterPosition(pos));
+                self.pos = Some(pos);
+                self.positioned = true;
+            }
+        }
+
+        let recording = STATE.load(Ordering::Relaxed) == RECORDING;
+        let constant = self
+            .controls
+            .as_ref()
+            .map(|c| c.constant())
+            .unwrap_or(false);
+
+        egui::Frame::central_panel(ui.style()).show(ui, |ui| {
+            ui.set_max_width(120.0);
+            let size = egui::vec2(92.0, 92.0);
+            let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click_and_drag());
+
+            // Drag-to-move: past DRAG_PX a press is a move, not a gesture.
+            let delta = resp.drag_delta();
+            let moved = self.was_pressed && delta.length() > 0.0;
+            if moved {
+                self.drag_dist += delta.length();
+                if self.drag_dist > DRAG_PX {
+                    self.pointer = TilePointer::new(); // a drag is never a gesture
+                    if let Some(p) = self.pos.as_mut() {
+                        *p += delta;
+                        ui.ctx()
+                            .send_viewport_cmd(egui::ViewportCommand::OuterPosition(*p));
+                    }
+                }
+            }
+
+            let pressed_now = resp.is_pointer_button_down_on() || resp.dragged();
+            let released_now = self.was_pressed && !pressed_now;
+            if released_now {
+                self.drag_dist = 0.0;
+            }
+
+            let event = self.pointer.step(pressed_now, released_now, Instant::now(), constant);
+            self.was_pressed = pressed_now;
+            if let Some(ev) = event {
+                match ev {
+                    TileEvent::Toggle => {
+                        let _ = self.trigger.as_ref().map(|t| t.send(Signal::Toggle));
+                    }
+                    TileEvent::DoubleClick => {
+                        let next = !constant;
+                        if let Some(c) = &self.controls {
+                            c.constant.store(next, Ordering::Relaxed);
+                        }
+                        let _ = self
+                            .trigger
+                            .as_ref()
+                            .map(|t| t.send(Signal::Constant(next)));
+                    }
+                    TileEvent::HoldStart => {
+                        let _ = self
+                            .trigger
+                            .as_ref()
+                            .map(|t| t.send(Signal::HoldStart));
+                    }
+                    TileEvent::HoldEnd => {
+                        if let Some(c) = &self.controls {
+                            c.hold_release.store(true, Ordering::Relaxed);
+                        }
+                    }
+                }
+                self.note(ev);
+            }
+
+            // The icon itself: the VoxBox logo, tinted by state. Green pulse
+            // = recording, blue = constant mode, plain = idle.
+            let bg = egui::Color32::from_rgba_unmultiplied(12, 24, 16, 235);
+            ui.painter()
+                .rect_filled(rect.expand(8.0), 14.0, bg);
+            if let Some(tex) = &self.texture {
+                let tint = if recording {
+                    egui::Color32::from_rgb(120, 255, 140)
+                } else if constant {
+                    egui::Color32::from_rgb(120, 200, 255)
+                } else {
+                    egui::Color32::WHITE
+                };
+                ui.painter().image(
+                    tex.id(),
+                    rect,
+                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                    tint,
+                );
+            } else {
+                ui.painter().text(
+                    rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    "VOX",
+                    egui::FontId::proportional(22.0),
+                    egui::Color32::from_rgb(34, 197, 94),
+                );
+            }
+
+            // Right-click: a tiny in-icon menu (WisprFlow bar style).
+            if resp.secondary_clicked() {
+                self.menu_open = !self.menu_open;
+            }
+            if self.menu_open {
+                if ui.small_button("Open Studio").clicked() {
+                    self.menu_open = false;
+                    crate::tray::open_studio();
+                }
+                if ui.small_button("Hide").clicked() {
+                    self.menu_open = false;
+                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+            }
+
+            ui.vertical(|ui| {
+                let mode = if constant { "constant ON" } else { "idle" };
+                ui.label(
+                    egui::RichText::new(format!(
+                        "{} {mode}",
+                        if recording { "\u{25cf}" } else { "\u{25cb}" }
+                    ))
+                    .small(),
+                );
+                ui.label(egui::RichText::new(&self.last_event_note).weak().small());
+            });
+        });
+
+        ui.ctx()
+            .request_repaint_after(Duration::from_millis(150));
+    }
+}
+
+/// Open the desktop toggle icon (one at a time). Frameless: no title bar,
+/// no taskbar entry — an icon, not a window.
+pub fn launch_tile(c: TileCtx) {
+    if c.open_flag
+        .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
+        .is_err()
+    {
+        return;
+    }
+    let texture: Option<egui::TextureHandle> = None;
+    let app = TileApp {
+        trigger: c.trigger.clone(),
+        controls: c.controls.clone(),
+        texture,
+        pointer: TilePointer::new(),
+        was_pressed: false,
+        positioned: false,
+        pos: None,
+        drag_dist: 0.0,
+        menu_open: false,
+        last_event_note: String::new(),
+    };
+    let flag = Arc::clone(&c.open_flag);
+    let opts = native_opts(
+        egui::ViewportBuilder::default()
+            .with_inner_size([124.0, 176.0])
+            .with_resizable(false)
+            .with_decorations(false)
+            .with_always_on_top()
+            .with_taskbar(false)
+            .with_title("VoxBox"),
+    );
+    let result = eframe::run_native(
+        "VoxBox tile",
+        opts,
+        Box::new(move |cc| {
+            let mut app = app;
+            if let Some((w, h, rgba)) = decode_png_rgba(LOGO_PNG) {
+                let image = egui::ColorImage::from_rgba_unmultiplied(
+                    [w as usize, h as usize],
+                    &rgba,
+                );
+                app.texture = Some(cc.egui_ctx.load_texture("voxbox-logo", image, Default::default()));
+            }
+            Ok(Box::new(app) as Box<dyn eframe::App>)
+        }),
+    );
+    if let Err(e) = result {
+        eprintln!("  [tile] could not open: {e}");
+    }
+    flag.store(false, Ordering::Relaxed);
+}
+
+#[cfg(test)]
+mod tile_tests {
+    use super::*;
+
+    fn base() -> Instant {
+        Instant::now()
+    }
+
+    #[test]
+    fn quick_tap_yields_one_toggle_after_the_double_click_window() {
+        let mut p = TilePointer::new();
+        let t0 = base();
+        assert_eq!(p.step(true, false, t0, false), None);
+        assert_eq!(p.step(false, true, t0 + Duration::from_millis(80), false), None);
+        assert_eq!(
+            p.step(
+                false,
+                false,
+                t0 + Duration::from_millis(80 + DOUBLE_MS as u64 + 50),
+                false
+            ),
+            Some(TileEvent::Toggle)
+        );
+    }
+
+    #[test]
+    fn double_click_yields_one_double_click_not_a_toggle() {
+        let mut p = TilePointer::new();
+        let t0 = base();
+        p.step(true, false, t0, false);
+        p.step(false, true, t0 + Duration::from_millis(80), false);
+        assert_eq!(p.step(true, false, t0 + Duration::from_millis(200), false), Some(TileEvent::DoubleClick));
+        p.step(false, true, t0 + Duration::from_millis(280), false);
+        assert_eq!(
+            p.step(false, false, t0 + Duration::from_millis(700), false),
+            None,
+            "second click of the pair must not become a late single-click Toggle"
+        );
+    }
+
+    #[test]
+    fn hold_crossing_the_threshold_starts_and_releases() {
+        let mut p = TilePointer::new();
+        let t0 = base();
+        p.step(true, false, t0, false);
+        assert_eq!(p.step(true, false, t0 + Duration::from_millis(100), false), None);
+        assert_eq!(
+            p.step(true, false, t0 + Duration::from_millis(HOLD_MS as u64 + 10), false),
+            Some(TileEvent::HoldStart)
+        );
+        assert_eq!(
+            p.step(false, true, t0 + Duration::from_millis(1200), false),
+            Some(TileEvent::HoldEnd)
+        );
+    }
+
+    #[test]
+    fn slow_release_without_tick_still_counts_as_hold() {
+        let mut p = TilePointer::new();
+        let t0 = base();
+        p.step(true, false, t0, false);
+        assert_eq!(
+            p.step(false, true, t0 + Duration::from_millis(HOLD_MS as u64 + 5), false),
+            Some(TileEvent::HoldEnd)
+        );
+    }
+
+    #[test]
+    fn three_quick_taps_give_double_click_then_one_toggle() {
+        let mut p = TilePointer::new();
+        let t0 = base();
+        p.step(true, false, t0, false);
+        p.step(false, true, t0 + Duration::from_millis(60), false);
+        assert_eq!(p.step(true, false, t0 + Duration::from_millis(150), false), Some(TileEvent::DoubleClick));
+        p.step(false, true, t0 + Duration::from_millis(220), false);
+        p.step(true, false, t0 + Duration::from_millis(320), false);
+        p.step(false, true, t0 + Duration::from_millis(380), false);
+        assert_eq!(
+            p.step(false, false, t0 + Duration::from_millis(800), false),
+            Some(TileEvent::Toggle)
+        );
     }
 }

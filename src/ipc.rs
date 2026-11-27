@@ -5,7 +5,7 @@
 //! CLI — is its own short-lived process. This socket is the wiring: the
 //! resident `serve`s, clients `send` one line and read one line back.
 //!
-//! Commands: `toggle`, `hold`, `constant on|off`, `reload`, `status`.
+//! Commands: `toggle`, `hold`, `constant on|off`, `reload`, `tile`, `status`.
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::mpsc::Sender;
@@ -26,6 +26,7 @@ pub fn parse_cmd(line: &str) -> Option<crate::dictate::Signal> {
         "constant on" => Some(crate::dictate::Signal::Constant(true)),
         "constant off" => Some(crate::dictate::Signal::Constant(false)),
         "reload" => Some(crate::dictate::Signal::Reload),
+        "tile" => Some(crate::dictate::Signal::TileShow),
         _ => None,
     }
 }
