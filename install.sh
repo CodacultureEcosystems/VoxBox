@@ -178,6 +178,33 @@ api_key = ""
 model = "local-model"
 AGENT
 fi
+if [ ! -f "$CONFIG_DIR/agents/ollama-local.toml" ]; then
+    cat > "$CONFIG_DIR/agents/ollama-local.toml" <<'AGENT'
+# Works out of the box if ollama is running: `ollama serve` + `ollama pull llama3.2`
+name = "ollama-local"
+api_base = "http://127.0.0.1:11434/v1"
+api_key = ""
+model = "llama3.2"
+AGENT
+fi
+if [ ! -f "$CONFIG_DIR/agents/llamafile-local.toml" ]; then
+    cat > "$CONFIG_DIR/agents/llamafile-local.toml" <<'AGENT'
+# llamafile / llama.cpp server template: `./llamafile --port 8080`
+name = "llamafile-local"
+api_base = "http://127.0.0.1:8080/v1"
+api_key = ""
+model = "local"
+AGENT
+fi
+if [ ! -f "$CONFIG_DIR/agents/cloud-openai-template.toml" ]; then
+    cat > "$CONFIG_DIR/agents/cloud-openai-template.toml" <<'AGENT'
+# Cloud template — paste a key or export VOXBOX_API_KEY before starting vbd.
+name = "cloud-openai"
+api_base = "https://api.openai.com/v1"
+api_key = "sk-paste-yours-here"
+model = "gpt-4o-mini"
+AGENT
+fi
 
 # ── 7. desktop menu entry + icon + (optional) autostart ───────────────────
 say "Installing menu entry and icon"

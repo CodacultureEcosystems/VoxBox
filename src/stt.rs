@@ -115,6 +115,18 @@ pub fn is_hallucination(text: &str) -> bool {
     NOISE_LINES.contains(&norm.as_str())
 }
 
+/// Final cleanup applied to EVERY transcription before it is typed or
+/// spoken: pure noise becomes empty (so nothing lands), and Whisper's
+/// stage-direction groups ("[Music]", "(upbeat music)", \u{266a}) are
+/// stripped from otherwise real speech — "[Music]  Hello?" must type as
+/// "Hello?", brackets and all gone.
+pub fn clean_transcript(text: &str) -> String {
+    if is_hallucination(text) {
+        return String::new();
+    }
+    strip_stage_directions(text).trim().to_string()
+}
+
 /// Parse an engine name; unknown names fall back to whisper.
 pub fn engine_from(name: &str) -> SttEngine {
     match name.trim().to_lowercase().as_str() {
@@ -329,10 +341,7 @@ impl Transcriber {
             SttEngine::Parakeet => self.transcribe_parakeet(pcm16, sample_rate)?,
             SttEngine::Whisper => self.transcribe_whisper(pcm16, sample_rate)?,
         };
-        if is_hallucination(&text) {
-            return Ok(String::new());
-        }
-        Ok(text)
+        Ok(clean_transcript(&text))
     }
 
     #[cfg(feature = "whisper")]

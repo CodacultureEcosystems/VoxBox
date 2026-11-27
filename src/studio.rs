@@ -299,9 +299,13 @@ impl eframe::App for StudioApp {
                     ui.horizontal(|ui| {
                         if ui.button("Voice mode — talk, it replies out loud").clicked() {
                             crate::tray::spawn_shell(&[]);
+                            *self.test_status.lock().expect("status") =
+                                "voice shell opened in a new terminal window".into();
                         }
                         if ui.button("Text mode").clicked() {
                             crate::tray::spawn_shell(&["--text"]);
+                            *self.test_status.lock().expect("status") =
+                                "text shell opened in a new terminal window".into();
                         }
                     });
                     ui.add_space(10.0);
@@ -318,6 +322,8 @@ impl eframe::App for StudioApp {
                         });
                     if self.selected != before {
                         let _ = crate::config::save_tts(None, Some(&self.voice_path()), None);
+                        *self.test_status.lock().expect("status") =
+                            format!("voice saved: {}", self.labels[self.selected]);
                     }
                     ui.horizontal(|ui| {
                         if ui.button("Speak a test line").clicked() {
@@ -356,6 +362,8 @@ impl eframe::App for StudioApp {
                     let response = ui.checkbox(&mut self.tts_on, "Speak replies out loud");
                     if response.changed() {
                         let _ = crate::config::save_tts(None, None, Some(self.tts_on));
+                        *self.test_status.lock().expect("status") =
+                            format!("spoken replies: {}", if self.tts_on { "on" } else { "off" });
                     }
                     ui.add_space(6.0);
                     let note = self
@@ -548,6 +556,8 @@ pub const HOLD_MS: u64 = 350;
 pub const DOUBLE_MS: u64 = 300;
 /// Movement (px) beyond which a press is a drag, not a gesture.
 pub const DRAG_PX: f32 = 6.0;
+/// Side of the square toggle icon in pixels (the whole window surface).
+pub const TILE_PX: f32 = 104.0;
 
 /// What the tile wants done; `launch_tile` maps these onto the resident.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -688,10 +698,20 @@ impl TileApp {
 
 impl eframe::App for TileApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        // The window surface itself is fully transparent — only the painted
+        // icon below is visible. Combined with override-redirect the window
+        // manager never draws a frame, shadow, or title bar on this surface:
+        // it is pixels floating on the desktop, exactly like a conky widget
+        // or a notification popup.
+        ui.style_mut().visuals.panel_fill = egui::Color32::TRANSPARENT;
+
         if !self.positioned {
             let screen = ui.ctx().input(|i| i.viewport_rect());
             if screen.width() > 200.0 {
-                let pos = egui::pos2(screen.right() - 150.0, screen.bottom() - 210.0);
+                let pos = egui::pos2(
+                    screen.right() - TILE_PX - 24.0,
+                    screen.bottom() - TILE_PX - 24.0,
+                );
                 ui.ctx()
                     .send_viewport_cmd(egui::ViewportCommand::OuterPosition(pos));
                 self.pos = Some(pos);
@@ -706,120 +726,156 @@ impl eframe::App for TileApp {
             .map(|c| c.constant())
             .unwrap_or(false);
 
-        egui::Frame::central_panel(ui.style()).show(ui, |ui| {
-            ui.set_max_width(120.0);
-            let size = egui::vec2(92.0, 92.0);
-            let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click_and_drag());
+        // One hit area: the whole little surface IS the icon.
+        let full = ui.max_rect();
+        let resp = ui.allocate_rect(full, egui::Sense::click_and_drag());
 
-            // Drag-to-move: past DRAG_PX a press is a move, not a gesture.
-            let delta = resp.drag_delta();
-            let moved = self.was_pressed && delta.length() > 0.0;
-            if moved {
-                self.drag_dist += delta.length();
-                if self.drag_dist > DRAG_PX {
-                    self.pointer = TilePointer::new(); // a drag is never a gesture
-                    if let Some(p) = self.pos.as_mut() {
-                        *p += delta;
-                        ui.ctx()
-                            .send_viewport_cmd(egui::ViewportCommand::OuterPosition(*p));
+        // Drag-to-move: past DRAG_PX a press is a move, not a gesture.
+        let delta = resp.drag_delta();
+        let moved = self.was_pressed && delta.length() > 0.0;
+        if moved {
+            self.drag_dist += delta.length();
+            if self.drag_dist > DRAG_PX {
+                self.pointer = TilePointer::new(); // a drag is never a gesture
+                if let Some(p) = self.pos.as_mut() {
+                    *p += delta;
+                    ui.ctx()
+                        .send_viewport_cmd(egui::ViewportCommand::OuterPosition(*p));
+                }
+            }
+        }
+
+        let pressed_now = resp.is_pointer_button_down_on() || resp.dragged();
+        let released_now = self.was_pressed && !pressed_now;
+        if released_now {
+            self.drag_dist = 0.0;
+        }
+
+        let event = self.pointer.step(pressed_now, released_now, Instant::now(), constant);
+        self.was_pressed = pressed_now;
+        if let Some(ev) = event {
+            match ev {
+                TileEvent::Toggle => {
+                    let _ = self.trigger.as_ref().map(|t| t.send(Signal::Toggle));
+                }
+                TileEvent::DoubleClick => {
+                    let next = !constant;
+                    if let Some(c) = &self.controls {
+                        c.constant.store(next, Ordering::Relaxed);
+                    }
+                    let _ = self
+                        .trigger
+                        .as_ref()
+                        .map(|t| t.send(Signal::Constant(next)));
+                }
+                TileEvent::HoldStart => {
+                    let _ = self.trigger.as_ref().map(|t| t.send(Signal::HoldStart));
+                }
+                TileEvent::HoldEnd => {
+                    if let Some(c) = &self.controls {
+                        c.hold_release.store(true, Ordering::Relaxed);
                     }
                 }
             }
+            self.note(ev);
+        }
 
-            let pressed_now = resp.is_pointer_button_down_on() || resp.dragged();
-            let released_now = self.was_pressed && !pressed_now;
-            if released_now {
-                self.drag_dist = 0.0;
-            }
+        // The icon: a rounded square centered in the surface, logo inside,
+        // tinted by state. Green = recording, blue = constant mode.
+        let icon = egui::Rect::from_center_size(
+            full.center(),
+            egui::vec2(TILE_PX - 10.0, TILE_PX - 10.0),
+        );
+        let tint = if recording {
+            egui::Color32::from_rgb(120, 255, 140)
+        } else if constant {
+            egui::Color32::from_rgb(120, 200, 255)
+        } else {
+            egui::Color32::WHITE
+        };
+        let bg = if recording {
+            egui::Color32::from_rgba_unmultiplied(16, 46, 26, 242)
+        } else if constant {
+            egui::Color32::from_rgba_unmultiplied(14, 32, 46, 242)
+        } else {
+            egui::Color32::from_rgba_unmultiplied(12, 24, 16, 235)
+        };
+        ui.painter().rect_filled(icon, 26.0, bg);
+        ui.painter().rect_stroke(
+            icon,
+            26.0,
+            egui::Stroke::new(2.0, tint.gamma_multiply(0.7)),
+            egui::StrokeKind::Outside,
+        );
+        if let Some(tex) = &self.texture {
+            ui.painter().image(
+                tex.id(),
+                icon.shrink(14.0),
+                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                tint,
+            );
+        } else {
+            ui.painter().text(
+                icon.center(),
+                egui::Align2::CENTER_CENTER,
+                "VOX",
+                egui::FontId::proportional(24.0),
+                egui::Color32::from_rgb(34, 197, 94),
+            );
+        }
+        let word = if recording {
+            "listening"
+        } else if constant {
+            "constant"
+        } else {
+            "tap"
+        };
+        ui.painter().text(
+            egui::pos2(icon.center().x, icon.bottom() - 10.0),
+            egui::Align2::CENTER_CENTER,
+            word,
+            egui::FontId::proportional(10.0),
+            tint.gamma_multiply(0.9),
+        );
 
-            let event = self.pointer.step(pressed_now, released_now, Instant::now(), constant);
-            self.was_pressed = pressed_now;
-            if let Some(ev) = event {
-                match ev {
-                    TileEvent::Toggle => {
-                        let _ = self.trigger.as_ref().map(|t| t.send(Signal::Toggle));
-                    }
-                    TileEvent::DoubleClick => {
-                        let next = !constant;
-                        if let Some(c) = &self.controls {
-                            c.constant.store(next, Ordering::Relaxed);
+        resp.clone().on_hover_text(format!(
+            "VoxBox toggle — {}\nsingle click: one utterance\ndouble click: constant mode\n\
+             hold: push-to-talk\ndrag: move · right-click: menu",
+            self.last_event_note
+        ));
+
+        // Right-click: a small menu floating inside the surface (it cannot
+        // render outside the window, so it overlays the icon).
+        let mut picked: Option<u8> = None;
+        if resp.secondary_clicked() {
+            self.menu_open = !self.menu_open;
+        }
+        if self.menu_open {
+            egui::Area::new(egui::Id::unique("voxbox-tile-menu"))
+                .fixed_pos(egui::pos2(full.left() + 8.0, full.top() + 8.0))
+                .show(ui.ctx(), |ui| {
+                    egui::Frame::popup(ui.style()).show(ui, |ui| {
+                        ui.set_min_width(88.0);
+                        if ui.small_button("Studio").clicked() {
+                            picked = Some(0);
                         }
-                        let _ = self
-                            .trigger
-                            .as_ref()
-                            .map(|t| t.send(Signal::Constant(next)));
-                    }
-                    TileEvent::HoldStart => {
-                        let _ = self
-                            .trigger
-                            .as_ref()
-                            .map(|t| t.send(Signal::HoldStart));
-                    }
-                    TileEvent::HoldEnd => {
-                        if let Some(c) = &self.controls {
-                            c.hold_release.store(true, Ordering::Relaxed);
+                        if ui.small_button("Hide").clicked() {
+                            picked = Some(1);
                         }
-                    }
-                }
-                self.note(ev);
+                    });
+                });
+        }
+        match picked {
+            Some(0) => {
+                self.menu_open = false;
+                crate::tray::open_studio();
             }
-
-            // The icon itself: the VoxBox logo, tinted by state. Green pulse
-            // = recording, blue = constant mode, plain = idle.
-            let bg = egui::Color32::from_rgba_unmultiplied(12, 24, 16, 235);
-            ui.painter()
-                .rect_filled(rect.expand(8.0), 14.0, bg);
-            if let Some(tex) = &self.texture {
-                let tint = if recording {
-                    egui::Color32::from_rgb(120, 255, 140)
-                } else if constant {
-                    egui::Color32::from_rgb(120, 200, 255)
-                } else {
-                    egui::Color32::WHITE
-                };
-                ui.painter().image(
-                    tex.id(),
-                    rect,
-                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                    tint,
-                );
-            } else {
-                ui.painter().text(
-                    rect.center(),
-                    egui::Align2::CENTER_CENTER,
-                    "VOX",
-                    egui::FontId::proportional(22.0),
-                    egui::Color32::from_rgb(34, 197, 94),
-                );
+            Some(1) => {
+                self.menu_open = false;
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
             }
-
-            // Right-click: a tiny in-icon menu (WisprFlow bar style).
-            if resp.secondary_clicked() {
-                self.menu_open = !self.menu_open;
-            }
-            if self.menu_open {
-                if ui.small_button("Open Studio").clicked() {
-                    self.menu_open = false;
-                    crate::tray::open_studio();
-                }
-                if ui.small_button("Hide").clicked() {
-                    self.menu_open = false;
-                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-                }
-            }
-
-            ui.vertical(|ui| {
-                let mode = if constant { "constant ON" } else { "idle" };
-                ui.label(
-                    egui::RichText::new(format!(
-                        "{} {mode}",
-                        if recording { "\u{25cf}" } else { "\u{25cb}" }
-                    ))
-                    .small(),
-                );
-                ui.label(egui::RichText::new(&self.last_event_note).weak().small());
-            });
-        });
+            _ => {}
+        }
 
         ui.ctx()
             .request_repaint_after(Duration::from_millis(150));
@@ -851,11 +907,18 @@ pub fn launch_tile(c: TileCtx) {
     let flag = Arc::clone(&c.open_flag);
     let opts = native_opts(
         egui::ViewportBuilder::default()
-            .with_inner_size([124.0, 176.0])
+            .with_inner_size([TILE_PX, TILE_PX])
             .with_resizable(false)
             .with_decorations(false)
+            // Override-redirect: the X11 window manager (Cinnamon) never
+            // manages this surface — no frame, no shadow, no title bar,
+            // not in alt-tab. This is how conky/notification popups work.
+            .with_override_redirect(true)
+            .with_transparent(true)
+            .with_has_shadow(false)
             .with_always_on_top()
             .with_taskbar(false)
+            .with_window_type(egui::X11WindowType::Dock)
             .with_title("VoxBox"),
     );
     let result = eframe::run_native(

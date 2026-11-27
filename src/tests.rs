@@ -290,6 +290,18 @@ fn hallucination_bracketed_noise_is_filtered() {
 }
 
 #[test]
+fn clean_transcript_strips_brackets_but_keeps_speech() {
+    use crate::stt::clean_transcript;
+    // The user's exact symptom: whisper tacks [Music] onto real speech in a
+    // quiet house. The words must land, the stage direction must not.
+    assert_eq!(clean_transcript("[Music]  Hello?"), "Hello?");
+    assert_eq!(clean_transcript("[Music]  What music is playing?"), "");
+    assert_eq!(clean_transcript("(upbeat music)"), "");
+    assert_eq!(clean_transcript("\u{266a} \u{266b}"), "");
+    assert_eq!(clean_transcript("hello there"), "hello there");
+}
+
+#[test]
 fn hallucination_real_speech_survives() {
     use crate::stt::is_hallucination;
     // Real words must always pass through, even with noise markers around them.

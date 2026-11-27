@@ -183,12 +183,9 @@ impl Tray for VoxTray {
                 },
             )),
             MenuItem::Standard(item(
-                format!(
-                    "Hotkey: {} (config.toml [dictation])",
-                    self.key.to_uppercase()
-                ),
-                false,
-                |_| {},
+                "Edit settings (config.toml)".into(),
+                true,
+                |_| open_config(),
             )),
             MenuItem::Separator,
             MenuItem::Standard(item("Open VoxBox Studio".into(), true, |_| open_studio())),
@@ -197,6 +194,23 @@ impl Tray for VoxTray {
                 tray.quit.store(true, Ordering::Relaxed);
             })),
         ]
+    }
+}
+
+/// Open config.toml in the user's default editor. Loud on failure — no
+/// menu entry may be a dead end.
+pub fn open_config() {
+    let path = crate::config::config_path();
+    if !path.exists() {
+        eprintln!("  [tray] config not found at {} — run install.sh first", path.display());
+        return;
+    }
+    match std::process::Command::new("xdg-open").arg(&path).spawn() {
+        Ok(_) => eprintln!("  [tray] opening {} in your editor", path.display()),
+        Err(e) => eprintln!(
+            "  [tray] could not open an editor for {} ({e}) — edit it in any text editor",
+            path.display()
+        ),
     }
 }
 

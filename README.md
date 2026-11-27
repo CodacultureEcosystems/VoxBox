@@ -210,7 +210,7 @@ keeps redistribution simple.
 ## Lion Rule — honesty about what is verified
 
 - **Verified in this repository / sandbox:** the crate compiles clean (no
-  warnings), all 78 unit tests pass; hotkey-code map, ASCII→keycode map,
+  warnings), all 79 unit tests pass; hotkey-code map, ASCII→keycode map,
   injector argument shapes, tray state/label/pixmap helpers, IPC command
   parsing plus a live socket round-trip (server thread + client), config
   set-subkey/agent loading/duplicate-table healing, and the frozen 32-byte
@@ -220,6 +220,26 @@ keeps redistribution simple.
   speech sample ("And so, my fellow Americans, ask not what your country can
   do for you…") with no ONNX Runtime — the engine works on a stock Debian
   box without `pkg-config`/OpenSSL.
+- **v0.4.3 — no more Cinnamon window, ever (override-redirect):** the tile
+  was still being decorated by Cinnamon because a frameless *managed* window
+  still gets the WM treatment (shadows, borders, focus rules). The fix is the
+  same mechanism conky and notification popups use: **override-redirect** —
+  the X11 window manager never touches the surface at all. The tile is now a
+  104×104 fully transparent surface (`.with_override_redirect(true)` +
+  `.with_transparent(true)` + `.with_has_shadow(false)` + window type Dock)
+  with ONLY a rounded, centered icon painted on it — no panel background, no
+  text block below the logo (status is a tiny word inside the icon plus a
+  hover tooltip). The transcript path was fixed too: whisper's "[Music]”
+  stage directions are now stripped from the text that lands in your
+  editor (`clean_transcript`), not merely checked. Every Studio button and
+  tray item was audited: all 13 Studio controls + 5 tray items do real work
+  with visible feedback; the one dead item (disabled "Hotkey" line) became a
+  working "Edit settings (config.toml)" entry. The installer now scaffolds
+  FOUR agent templates (example-local, ollama-local, llamafile-local,
+  cloud-openai-template) so the agent picker has real entries. Verified:
+  79/79 tests, zero warnings, clean release build, `bash -n install.sh`.
+  Honest limit: the sandbox has no X server, so the rendered look must be
+  confirmed on the user's session.
 - **v0.4.2 — the toggle icon is BACK, done right (WisprFlow Flow Bar):**
   0.4.0 deleted the floating window because the user wanted an icon, not a
   window — but it took the on-screen toggle with it. v0.4.2 restores it as a
