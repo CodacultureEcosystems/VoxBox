@@ -3,7 +3,7 @@
 A speech-to-text (STT) and speech-to-speech (STS) Station that works as a shell
 for your entire Linux PC — and a system-wide dictation Being for every
 application on the desktop, with a real settings window (**VoxBox Studio**) and
-a desktop tile you can click, double-click, and hold to talk. Fully local by
+a desktop icon you click to talk — the WisprFlow shape, fully local:
 default. **All Rust, zero Python.**
 
 ## The Beings
@@ -43,14 +43,14 @@ hotkey ──► vbd (Bsew@vbd): record ──► whisper-rs ──► uinput/wt
 - **VoxBox Studio (window UI):** left-click the tray Being (or launch `vbd
   --window`) for a real window — status banner, one-click record, conversation
   launchers, Piper voice picker with a live test line, **speech-engine
-  selector, local-model loader, AI-agent picker, and the desktop tile**.
-- **Desktop tile (default on, no hotkey needed):** when the resident starts it
-  opens a small always-on-top VoxBox icon bottom-right, and the installer puts
-  a **"VoxBox Talk" icon on your desktop** (clicking it wakes the resident if
-  it is not running). Gestures: **single click** records one utterance,
-  **double click** toggles constant mode (continuous dictated conversation),
-  **hold and release** is push-to-talk. The keyboard hotkey still works for
-  those who want it, but nothing requires it.
+  selector, local-model loader, and AI-agent picker**.
+- **ONE app, ONE name (WisprFlow shape):** "VoxBox" is the only entry in the
+  menu and the only icon on the desktop — the same `.desktop` file. Clicking
+  it talks: one click, speak, the text is typed into the focused app
+  (clicking also wakes the resident if it is asleep, via `vbd --toggle`).
+  No floating tile window, no second app. Constant mode is on the tray menu.
+  The keyboard hotkey still works for those who want it, but nothing
+  requires it.
 - **Tray Being:** while the dictation resident runs, a status icon (SNI over
   D-Bus) shows idle/recording state and offers *Record now*, a constant-mode
   toggle, *Open VoxBox Studio*, *Quit*.
@@ -190,13 +190,14 @@ Commands run as your own user with a timeout (default 20 s).
 | `src/tts.rs`         | piper / spd-say / espeak spoken replies          |
 | `src/shell.rs`       | interactive voice shell loop                     |
 | `src/config.rs`      | TOML config with sane defaults                   |
-| `src/studio.rs`      | VoxBox Studio window + desktop tile (egui)       |
+| `src/ipc.rs`         | Unix-socket bridge: icon/Studio/CLI → resident   |
+| `src/studio.rs`      | VoxBox Studio window (egui)                      |
 | `src/tray.rs`        | SNI tray Being: state icon, menu, window launcher |
 
 ## Development
 
 ```bash
-cargo test          # 73 unit tests (brain, executor, vad, config, tts, keys, inject, tile)
+cargo test          # 72 unit tests (brain, executor, vad, config, tts, keys, inject, ipc)
 cargo build --release
 ```
 
@@ -209,27 +210,34 @@ keeps redistribution simple.
 ## Lion Rule — honesty about what is verified
 
 - **Verified in this repository / sandbox:** the crate compiles clean (no
-  warnings), all 73 unit tests pass; hotkey-code map, ASCII→keycode map,
-  injector argument shapes, tray state/label/pixmap helpers, tile pointer
-  gestures (pure state machine), config set-subkey/agent loading, and the
-  frozen 32-byte TraceEvent layout (size/align asserted) are unit-tested.
+  warnings), all 72 unit tests pass; hotkey-code map, ASCII→keycode map,
+  injector argument shapes, tray state/label/pixmap helpers, IPC command
+  parsing plus a live socket round-trip (server thread + client), config
+  set-subkey/agent loading/duplicate-table healing, and the frozen 32-byte
+  TraceEvent layout (size/align asserted) are unit-tested.
 - **Parakeet verified end-to-end in the sandbox:** the pure-Rust `burn`
   backend loaded `parakeet-tdt-0.6b-v3` and correctly transcribed a real 11 s
   speech sample ("And so, my fellow Americans, ask not what your country can
   do for you…") with no ONNX Runtime — the engine works on a stock Debian
   box without `pkg-config`/OpenSSL.
-- **v0.3.2 fixes:** the desktop tile and tray-opened Studio window now set
-  winit's `any_thread` flag via eframe's `event_loop_builder` hook — without
-  it, winit panics when an event loop is created off the main thread, which
-  is exactly why the tile never appeared on 0.3.1 (the panic was captured in
-  the user's log). The fix is compile- and test-verified in the sandbox; live
-  window display still needs your desktop. Whisper hallucination filtering
-  ("[Music]", "(upbeat music)", "What music is playing?" in a quiet house)
-  is unit-tested against the exact strings observed on the user's machine:
+- **v0.4.0 — the WisprFlow reshape:** the floating tile window is GONE
+  (deleted). One app, one name: the single `voxbox.desktop` entry is both the
+  menu app and the desktop icon; clicking it runs `vbd --toggle`, which
+  toggles an utterance on the resident or wakes it. The tray and Studio open
+  Studio in its own process (a window must own its process's main thread —
+  winit panics otherwise; v0.3.1's tile died exactly that way, captured in
+  the user's log). The resident, desktop icon, Studio, and CLI talk over a
+  Unix socket (`~/.cache/voxbox/vbd.sock`) — unit-tested round trip. Each
+  typed utterance now prints its timing (`audio · transcribe · inject`) so
+  lag is measured, not guessed.
+- **v0.3.2 fixes (still in):** whisper hallucination filtering ("[Music]",
+  "(upbeat music)", "What music is playing?" in a quiet house) is
+  unit-tested against the exact strings observed on the user's machine:
   filtered utterances type nothing and notify "No words detected".
 - **Not verified here (needs a real desktop session with audio + input
   devices):** end-to-end global hotkey capture from `/dev/input/event*`,
-  uinput injection into a focused window, desktop notifications, tray menu and
-  Studio/tile window interactions in a live desktop environment, and live
-  dictation. This sandbox has no audio, input, or D-Bus session. Test on your
-  machine and report what breaks — that is the Lion rule we hold.
+  uinput injection into a focused window, desktop notifications, tray menu,
+  Studio window display in a live desktop environment, desktop-launcher
+  clicks, and live dictation. This sandbox has no audio, input, or D-Bus
+  session. Test on your machine and report what breaks — that is the Lion
+  rule we hold.

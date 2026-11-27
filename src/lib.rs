@@ -9,6 +9,7 @@ pub mod config;
 pub mod dictate;
 pub mod executor;
 pub mod inject;
+pub mod ipc;
 pub mod keys;
 pub mod shell;
 pub mod stt;

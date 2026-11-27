@@ -39,6 +39,11 @@ struct VxdArgs {
     /// Open the VoxBox Studio window (voice, modes, settings UI)
     #[arg(long)]
     window: bool,
+
+    /// Toggle one utterance on the running resident — or wake it if it is
+    /// asleep. This is what the desktop icon and menu entry run.
+    #[arg(long)]
+    toggle: bool,
 }
 
 impl VxdArgs {
@@ -59,15 +64,48 @@ impl VxdArgs {
     }
 }
 
+fn spawn_detached_resident() {
+    use std::os::unix::process::CommandExt;
+    use std::process::Stdio;
+    let exe = std::env::current_exe()
+        .ok()
+        .filter(|p| p.exists())
+        .unwrap_or_else(|| std::path::PathBuf::from("vbd"));
+    let mut cmd = std::process::Command::new(exe);
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    // SAFETY: setsid only detaches the child from the controlling terminal
+    // so the resident survives its launcher closing. No other signals or
+    // descriptors are touched.
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::setsid();
+            Ok(())
+        });
+    }
+    let _ = cmd.spawn();
+}
+
 fn main() -> std::process::ExitCode {
     let args = VxdArgs::parse();
     let config = Config::load(args.config.as_deref());
+    if args.toggle {
+        return match voxbox::ipc::send("toggle") {
+            Ok(state) => {
+                println!("VoxBox: {state}");
+                std::process::ExitCode::SUCCESS
+            }
+            Err(_) => {
+                println!("VoxBox resident is asleep — waking it");
+                spawn_detached_resident();
+                std::process::ExitCode::SUCCESS
+            }
+        };
+    }
     if args.window {
         voxbox::studio::launch(voxbox::studio::StudioCtx {
-            trigger: None,
-            controls: None,
             open_flag: Arc::new(AtomicBool::new(true)),
-            tile_open: Arc::new(AtomicBool::new(false)),
             key: config.dictation.key.clone(),
         });
         return std::process::ExitCode::SUCCESS;

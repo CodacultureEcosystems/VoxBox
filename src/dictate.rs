@@ -247,30 +247,24 @@ pub fn run(config: Config, config_path: Option<&str>) -> Result<()> {
     let (tx, rx) = mpsc::channel::<Signal>();
     let quit = Arc::new(AtomicBool::new(false));
     let controls = Controls::new();
-    let tile_open = Arc::new(AtomicBool::new(false));
     let tray = crate::tray::spawn(
         &key_name,
         tx.clone(),
         Arc::clone(&quit),
         Arc::clone(&controls),
-        Arc::clone(&tile_open),
     );
 
-    // The desktop tile rides with the resident — visible immediately,
-    // no Studio digging required.
+    // The IPC socket: desktop icon, Studio window, and CLI are separate
+    // processes — they drive the resident through here (WisprFlow shape).
     {
-        let tile_ctx = crate::studio::TileCtx {
-            trigger: Some(tx.clone()),
-            controls: Some(Arc::clone(&controls)),
-            open_flag: Arc::clone(&tile_open),
-        };
+        let ipc_tx = tx.clone();
         let _ = std::thread::Builder::new()
-            .name("voxbox-tile-spawn".into())
-            .spawn(move || crate::studio::launch_tile(tile_ctx));
-        println!(
-            "  tile: opening the desktop tile (bottom-right) — click: utterance · \
-             double-click: constant mode · hold: push-to-talk"
-        );
+            .name("vbd-ipc".into())
+            .spawn(move || {
+                if let Err(e) = crate::ipc::serve(ipc_tx) {
+                    eprintln!("  [ipc] {e}");
+                }
+            });
     }
 
     let (pre_tx, pre_rx) = mpsc::channel::<Result<Transcriber>>();
@@ -291,8 +285,8 @@ pub fn run(config: Config, config_path: Option<&str>) -> Result<()> {
     let mut tracer = crate::trace::TraceLog::open(crate::trace::TraceLog::default_path())?;
     let _ = tracer.emit_ok(crate::trace::Verb::Sprout, cell_id);
     println!(
-        "  VoxBox dictation: press {key_display} (or the tray 'Record now') to talk; \
-         text lands in the focused app"
+        "  VoxBox dictation: press {key_display} (or click the desktop icon / \
+         tray 'Record now') to talk; text lands in the focused app"
     );
     println!("  injector: {injector_hint}; notifications: {notifications}");
     notify(
@@ -485,6 +479,7 @@ fn deliver(
             }
         }
     }
+    let started = std::time::Instant::now();
     let text = match transcriber
         .as_mut()
         .expect("transcriber")
@@ -503,11 +498,17 @@ fn deliver(
             return;
         }
     };
+    let transcribe_ms = started.elapsed().as_millis();
 
     let injector = Injector::from_config(injector_hint, &text);
-    match injector.inject_with_fallback(&text) {
+    let inject_result = injector.inject_with_fallback(&text);
+    let inject_ms = started.elapsed().as_millis() - transcribe_ms;
+    match inject_result {
         Ok(()) => {
-            println!("  ▶ typed: {text}");
+            println!(
+                "  ▶ typed: {text}  (audio {:.1}s · transcribe {transcribe_ms}ms · inject {inject_ms}ms)",
+                rec.pcm.len() as f32 / (2.0 * rec.sample_rate as f32)
+            );
             let _ = tracer.emit_ok(crate::trace::Verb::Yield, cell_id);
             notify(notifications, "VoxBox", &text);
         }

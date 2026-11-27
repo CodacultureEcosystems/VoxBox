@@ -190,7 +190,8 @@ if [ -f "$REPO_DIR/assets/voxbox.png" ]; then
     install -m 0644 "$REPO_DIR/assets/voxbox.png" \
         "$HOME/.local/share/icons/hicolor/512x512/apps/voxbox.png"
 fi
-sed -e "s|^Exec=vbd --window|Exec=$INSTALL_BIN/vbd --window|" \
+sed -e "s|^Exec=vbd --toggle|Exec=$INSTALL_BIN/vbd --toggle|" \
+    -e "s|^Exec=vbd --window|Exec=$INSTALL_BIN/vbd --window|" \
     -e "s|^Exec=voxbox dictation|Exec=$INSTALL_BIN/voxbox dictation|" \
     -e "s|^Exec=vbd$|Exec=$INSTALL_BIN/vbd|" \
     -e "s|^Exec=voxbox$|Exec=$INSTALL_BIN/voxbox|" \
@@ -201,15 +202,17 @@ command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$
 command -v gtk-update-icon-cache >/dev/null 2>&1 && \
     gtk-update-icon-cache -f -t "$HOME/.local/share/icons/hicolor" || true
 
-# the desktop tile: an icon ON the desktop — click launches (or wakes) the
-# resident, which opens the always-on-top toggle tile
+# ONE app, ONE name: the same "VoxBox" entry is the desktop icon. Clicking
+# it (menu or desktop) toggles talk — or wakes the resident if it is asleep.
+# Studio stays one right-click action away and one tray-click away.
 if [ -d "$HOME/Desktop" ]; then
-    say "Installing the VoxBox Talk tile on your desktop"
-    install -m 0755 "$REPO_DIR/assets/voxbox-tile.desktop" "$HOME/Desktop/voxbox-tile.desktop"
+    say "Installing the VoxBox icon on your desktop"
+    install -m 0755 "$APPS_DIR/voxbox.desktop" "$HOME/Desktop/voxbox.desktop"
     command -v gio >/dev/null 2>&1 && \
-        gio set "$HOME/Desktop/voxbox-tile.desktop" metadata::trusted true 2>/dev/null || true
+        gio set "$HOME/Desktop/voxbox.desktop" metadata::trusted true 2>/dev/null || true
 fi
-install -m 0644 "$REPO_DIR/assets/voxbox-tile.desktop" "$APPS_DIR/voxbox-tile.desktop"
+# remove the old two-app leftovers (pre-0.4.0)
+rm -f "$HOME/Desktop/voxbox-tile.desktop" "$APPS_DIR/voxbox-tile.desktop"
 
 # ── 8. permissions needed for global hotkey + text injection ──────────────
 say "Permission setup (uinput rule + group memberships)"
@@ -243,11 +246,10 @@ fi
 cat <<EOF
 
   VoxBox installed.
-    Desktop tile:   the "VoxBox Talk" icon on your desktop (if you have one) —
-                    double-click it once to allow launching, then single click
-                    wakes the resident and the tile appears bottom-right:
-                    single click: one utterance · double click: constant mode ·
-                    hold + release: push-to-talk
+    Desktop icon:   ONE app — "VoxBox" in the menu AND on your desktop.
+                    Click it to talk: speech is typed into the focused app
+                    (clicking also wakes the resident if it is asleep).
+                    Right-click → Open VoxBox Studio for voice, engines, agents.
     Studio window:  left-click the tray Being, or menu → "VoxBox" (vbd --window)
     Tray icon:      appears when the dictation resident runs (state + Record now + quit)
     Engines:        Studio → Speech engine — whisper | parakeet
@@ -255,7 +257,6 @@ cat <<EOF
     Agents:         $CONFIG_DIR/agents/*.toml — pick them in Studio → AI agents
     Voice shell:    $INSTALL_BIN/voxbox
     AutoStart:      mkdir -p ~/.config/autostart &&
-                    cp $APPS_DIR/voxbox.desktop ~/.config/autostart/ &&
-                    cp $APPS_DIR/voxbox-tile.desktop ~/.config/autostart/
+                    cp $APPS_DIR/voxbox.desktop ~/.config/autostart/
     Hotkey:         ${CONFIGURED_KEY:-scrolllock}  (still available in $CONFIG_DIR/config.toml → [dictation] key)
 EOF

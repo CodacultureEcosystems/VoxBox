@@ -67,34 +67,24 @@ pub struct VoxTray {
     key: String,
     trigger: mpsc::Sender<Signal>,
     controls: Arc<Controls>,
-    window_open: Arc<AtomicBool>,
-    tile_open: Arc<AtomicBool>,
 }
 
-/// Open the Studio window (idempotent: one window at a time).
-pub fn open_window(
-    open_flag: Arc<AtomicBool>,
-    trigger: Option<mpsc::Sender<Signal>>,
-    controls: Option<Arc<Controls>>,
-    tile_open: Arc<AtomicBool>,
-    key: String,
-) {
-    if open_flag
-        .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
-        .is_err()
-    {
-        return;
+/// Open VoxBox Studio as its OWN process — a window must own its process's
+/// main thread (winit panics otherwise), so the tray never spawns one in-process.
+pub fn open_studio() {
+    let exe = std::env::current_exe()
+        .ok()
+        .filter(|p| p.exists())
+        .unwrap_or_else(|| std::path::PathBuf::from("vbd"));
+    let result = std::process::Command::new(exe)
+        .arg("--window")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+    if let Err(e) = result {
+        eprintln!("  [studio] could not launch: {e}");
     }
-    let ctx = crate::studio::StudioCtx {
-        trigger,
-        controls,
-        open_flag,
-        tile_open,
-        key,
-    };
-    let _ = std::thread::Builder::new()
-        .name("voxbox-studio".into())
-        .spawn(move || crate::studio::launch(ctx));
 }
 
 fn item(
@@ -141,13 +131,7 @@ impl Tray for VoxTray {
     }
 
     fn activate(&mut self, _x: i32, _y: i32) {
-        crate::tray::open_window(
-            Arc::clone(&self.window_open),
-            Some(self.trigger.clone()),
-            Some(Arc::clone(&self.controls)),
-            Arc::clone(&self.tile_open),
-            self.key.clone(),
-        );
+        open_studio();
     }
 
     fn icon_name(&self) -> String {
@@ -189,7 +173,7 @@ impl Tray for VoxTray {
             })),
             MenuItem::Standard(item(
                 format!(
-                    "{} Constant mode  (double-click the desktop tile)",
+                    "{} Constant mode",
                     if constant_on { "☒ Stop" } else { "☐ Start" }
                 ),
                 true,
@@ -207,17 +191,7 @@ impl Tray for VoxTray {
                 |_| {},
             )),
             MenuItem::Separator,
-            MenuItem::Standard(item(
-                "Open VoxBox Studio".into(),
-                true,
-                |tray| open_window(
-                    tray.window_open.clone(),
-                    Some(tray.trigger.clone()),
-                    Some(Arc::clone(&tray.controls)),
-                    Arc::clone(&tray.tile_open),
-                    tray.key.clone(),
-                ),
-            )),
+            MenuItem::Standard(item("Open VoxBox Studio".into(), true, |_| open_studio())),
             MenuItem::Separator,
             MenuItem::Standard(item("Quit".into(), true, move |tray| {
                 tray.quit.store(true, Ordering::Relaxed);
@@ -248,12 +222,9 @@ pub fn spawn(
     trigger: mpsc::Sender<Signal>,
     quit: Arc<AtomicBool>,
     controls: Arc<Controls>,
-    tile_open: Arc<AtomicBool>,
 ) -> Option<Handle<VoxTray>> {
     let tray = VoxTray {
         state: AtomicU8::new(IDLE),
-        window_open: Arc::new(AtomicBool::new(false)),
-        tile_open,
         quit,
         key: key.to_string(),
         trigger,

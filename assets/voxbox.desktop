@@ -2,8 +2,8 @@
 Type=Application
 Name=VoxBox
 GenericName=Voice Dictation & Voice Shell
-Comment=Voice Studio: dictation, conversation, voice picker
-Exec=vbd --window
+Comment=Click to talk — speech is typed into the focused app
+Exec=vbd --toggle
 TryExec=vbd
 Icon=voxbox
 Terminal=false
@@ -11,7 +11,11 @@ Categories=Utility;Accessibility;AudioVideo;
 Keywords=voice;dictation;speech;whisper;parakeet;stt;tts;microphone;studio;
 StartupNotify=false
 X-GNOME-UsesNotifications=true
-Actions=dictation;shell;textshell;
+Actions=studio;dictation;shell;textshell;
+
+[Desktop Action studio]
+Name=Open VoxBox Studio (voice, engines, agents)
+Exec=vbd --window
 
 [Desktop Action dictation]
 Name=Dictation (vbd resident: hotkey -> speech -> typed text)

@@ -227,22 +227,47 @@ fn missing_agents_dir_is_empty_not_error() {
 }
 
 #[test]
-fn tile_pointer_is_testable_purely() {
-    use crate::studio::{TileEvent, TilePointer, DOUBLE_MS, HOLD_MS};
-    assert!(DOUBLE_MS < HOLD_MS);
-    let mut p = TilePointer::new();
-    let t0 = std::time::Instant::now();
-    assert_eq!(p.step(true, false, t0, false), None);
-    assert_eq!(
-        p.step(
-            false,
-            true,
-            t0 + std::time::Duration::from_millis(60),
-            false
-        ),
-        None
-    );
-    assert_eq!(TileEvent::Toggle, TileEvent::Toggle);
+fn ipc_parse_cmd_maps_all_commands() {
+    use crate::dictate::Signal;
+    use crate::ipc::parse_cmd;
+    assert_eq!(parse_cmd("toggle"), Some(Signal::Toggle));
+    assert_eq!(parse_cmd("  toggle \n"), Some(Signal::Toggle));
+    assert_eq!(parse_cmd("hold"), Some(Signal::HoldStart));
+    assert_eq!(parse_cmd("constant on"), Some(Signal::Constant(true)));
+    assert_eq!(parse_cmd("constant off"), Some(Signal::Constant(false)));
+    assert_eq!(parse_cmd("reload"), Some(Signal::Reload));
+    assert_eq!(parse_cmd("status"), None, "status is answered by the server, not the loop");
+    assert_eq!(parse_cmd("rm -rf /"), None, "arbitrary lines never become signals");
+    assert_eq!(parse_cmd(""), None);
+}
+
+#[test]
+fn ipc_socket_round_trip() {
+    use crate::dictate::Signal;
+    use std::sync::mpsc;
+    let dir = std::env::temp_dir().join(format!("voxbox-ipc-test-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&dir);
+    let path = dir.join("test.sock");
+    let (tx, rx) = mpsc::channel::<Signal>();
+    let p = path.clone();
+    let server = std::thread::spawn(move || crate::ipc::serve_at(&p, tx));
+    // wait for the socket to appear
+    for _ in 0..100 {
+        if path.exists() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(path.exists(), "server bound the socket");
+    let reply = crate::ipc::send_at(&path, "toggle").expect("client sends");
+    assert_eq!(reply, "idle", "state is reported back to the client");
+    assert_eq!(rx.recv_timeout(std::time::Duration::from_secs(2)), Ok(Signal::Toggle));
+    let reply = crate::ipc::send_at(&path, "status").expect("client queries");
+    assert_eq!(reply, "idle");
+    let reply = crate::ipc::send_at(&path, "gibberish").expect("client sends");
+    assert!(reply.starts_with("err"), "unknown commands are rejected, got {reply}");
+    let _ = std::fs::remove_dir_all(&dir);
+    drop(server);
 }
 
 #[test]
