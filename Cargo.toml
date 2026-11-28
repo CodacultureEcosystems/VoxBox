@@ -37,3 +37,7 @@ x11rb = "0.13"
 
 [profile.release]
 lto = "thin"
+
+# VoxBox is its own cargo workspace root; do not inherit any parent workspace
+# (builds correctly from inside nested checkouts, e.g. a HIVE monorepo tree).
+[workspace]
