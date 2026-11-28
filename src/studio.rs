@@ -757,7 +757,7 @@ pub(crate) fn decode_png_rgba(bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
     Some((w, h, rgba))
 }
 
-pub(crate) const LOGO_PNG: &[u8] = include_bytes!("../assets/voxbox.png");
+pub(crate) const LOGO_PNG: &[u8] = include_bytes!("../assets/voxbox-logo.png");
 
 struct TileApp {
     trigger: Option<mpsc::Sender<Signal>>,

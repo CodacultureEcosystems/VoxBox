@@ -229,13 +229,25 @@ fi
 # ── 7. desktop menu entry + icon + (optional) autostart ───────────────────
 say "Installing menu entry and icon"
 APPS_DIR="$HOME/.local/share/applications"
-mkdir -p "$APPS_DIR" "$HOME/.local/share/icons/hicolor/scalable/apps" \
-         "$HOME/.local/share/icons/hicolor/512x512/apps"
+HI="$HOME/.local/share/icons/hicolor"
+mkdir -p "$APPS_DIR" "$HI/scalable/apps"
 install -m 0644 "$REPO_DIR/assets/voxbox.svg" \
-    "$HOME/.local/share/icons/hicolor/scalable/apps/voxbox.svg"
-if [ -f "$REPO_DIR/assets/voxbox.png" ]; then
-    install -m 0644 "$REPO_DIR/assets/voxbox.png" \
-        "$HOME/.local/share/icons/hicolor/512x512/apps/voxbox.png"
+    "$HI/scalable/apps/voxbox.svg"
+# Full official icon set: every hicolor size, plus the monochrome symbolic
+# variant for themed panels (and a white one for dark panels).
+for s in 16 22 24 32 48 64 128 256 512; do
+    f="$REPO_DIR/assets/icons/voxbox-$s.png"
+    [ -f "$f" ] || continue
+    mkdir -p "$HI/${s}x$s/apps"
+    install -m 0644 "$f" "$HI/${s}x$s/apps/voxbox.png"
+done
+if [ -f "$REPO_DIR/assets/voxbox-symbolic.png" ]; then
+    install -m 0644 "$REPO_DIR/assets/voxbox-symbolic.png" \
+        "$HI/scalable/apps/voxbox-symbolic.png"
+fi
+if [ -f "$REPO_DIR/assets/voxbox-symbolic-white.png" ]; then
+    install -m 0644 "$REPO_DIR/assets/voxbox-symbolic-white.png" \
+        "$HI/scalable/apps/voxbox-symbolic-white.png"
 fi
 sed -e "s|^Exec=vbd --toggle|Exec=$INSTALL_BIN/vbd --toggle|" \
     -e "s|^Exec=vbd --window|Exec=$INSTALL_BIN/vbd --window|" \

@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/brand/voxbox-readme-header-2000x1125.png" alt="VoxBox" width="720">
+</p>
+
 # VoxBox — a Voice Station for the Linux PC (Rust)
 
 A speech-to-text (STT) and speech-to-speech (STS) Station that works as a shell
